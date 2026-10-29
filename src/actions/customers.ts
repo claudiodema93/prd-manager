@@ -9,21 +9,21 @@ export type ListCustomersInput = z.input<typeof listCustomersInputSchema>;
 export type UpsertCustomerInput = z.input<typeof upsertCustomerInputSchema>;
 
 export function listCustomers(input: ListCustomersInput = {}) {
-  return ipc.client.customers.list(input);
+  return ipc.client.customers.listCustomers(input);
 }
 
 export function getCustomer(folderPath: string) {
-  return ipc.client.customers.get({ folderPath });
+  return ipc.client.customers.getCustomer({ folderPath });
 }
 
 export function upsertCustomer(input: UpsertCustomerInput) {
-  return ipc.client.customers.upsert(input);
+  return ipc.client.customers.upsertCustomer(input);
 }
 
 export function removeCustomer(folderPath: string) {
-  return ipc.client.customers.remove({ folderPath });
+  return ipc.client.customers.removeCustomer({ folderPath });
 }
 
 export function clearCustomers() {
-  return ipc.client.customers.clear();
+  return ipc.client.customers.clearCustomers();
 }

@@ -36,7 +36,7 @@ const config: ForgeConfig = {
   ],
   packagerConfig: {
     asar: true,
-    extraResource: ["./drizzle"],
+    extraResource: [path.resolve(import.meta.dirname, "drizzle")],
   },
   plugins: [
     new AutoUnpackNativesPlugin({}),
@@ -88,7 +88,10 @@ const config: ForgeConfig = {
       name: "@electron-forge/publisher-github",
     },
   ],
-  rebuildConfig: {},
+  rebuildConfig: {
+    // better-sqlite3 is Node-API and ships prebuilt binaries per platform.
+    ignoreModules: ["better-sqlite3"],
+  },
 };
 
 export default config;

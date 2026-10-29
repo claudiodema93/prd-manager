@@ -102,3 +102,9 @@ out/
 
 # Tanstack
 .tanstack/
+
+# SQLite
+*.db
+*.db-journal
+*.db-shm
+*.db-wal

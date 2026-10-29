@@ -7,9 +7,9 @@ import {
 } from "./handlers";
 
 export const customers = {
-  clear: clearCustomers,
-  get: getCustomer,
-  list: listCustomers,
-  remove: removeCustomer,
-  upsert: upsertCustomer,
+  clearCustomers,
+  getCustomer,
+  listCustomers,
+  removeCustomer,
+  upsertCustomer,
 };

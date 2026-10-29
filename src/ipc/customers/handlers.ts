@@ -8,6 +8,21 @@ import {
   upsertCustomerInputSchema,
 } from "./schemas";
 
+// List responses only need summary columns; metadata is fetched on demand.
+const customerSummaryColumns = {
+  articleSchemaVersion: customers.articleSchemaVersion,
+  createdAt: customers.createdAt,
+  customerCode: customers.customerCode,
+  folderMtimeMs: customers.folderMtimeMs,
+  folderName: customers.folderName,
+  folderPath: customers.folderPath,
+  name: customers.name,
+  revisionSchemaVersion: customers.revisionSchemaVersion,
+  schemaVersion: customers.schemaVersion,
+  status: customers.status,
+  updatedAt: customers.updatedAt,
+};
+
 export const listCustomers = os
   .input(listCustomersInputSchema)
   .handler(({ input }) => {
@@ -28,7 +43,7 @@ export const listCustomers = os
     );
 
     const items = db
-      .select()
+      .select(customerSummaryColumns)
       .from(customers)
       .where(where)
       .orderBy(
@@ -49,18 +64,19 @@ export const listCustomers = os
     return { items, total };
   });
 
+// Lookups return `null` when the row does not exist; mutations throw NOT_FOUND.
 export const getCustomer = os
   .input(customerFolderPathInputSchema)
   .handler(({ input }) => {
     const db = getDatabase();
-    const [customer] = db
-      .select()
-      .from(customers)
-      .where(eq(customers.folderPath, input.folderPath))
-      .limit(1)
-      .all();
 
-    return customer ?? null;
+    return (
+      db
+        .select()
+        .from(customers)
+        .where(eq(customers.folderPath, input.folderPath))
+        .get() ?? null
+    );
   });
 
 export const upsertCustomer = os
@@ -122,19 +138,18 @@ export const removeCustomer = os
   .input(customerFolderPathInputSchema)
   .handler(({ input }) => {
     const db = getDatabase();
-    const [removed] = db
+    const result = db
       .delete(customers)
       .where(eq(customers.folderPath, input.folderPath))
-      .returning({ folderPath: customers.folderPath })
-      .all();
+      .run();
 
-    if (!removed) {
+    if (result.changes === 0) {
       throw new ORPCError("NOT_FOUND", {
         message: `No customer found for "${input.folderPath}".`,
       });
     }
 
-    return removed.folderPath;
+    return input.folderPath;
   });
 
 export const clearCustomers = os.handler(() => {

@@ -4,6 +4,7 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { app } from "electron";
+import { inDevelopment } from "../constants";
 import { customers } from "./schema";
 
 const schema = { customers };
@@ -12,7 +13,7 @@ export type SaugerDatabase = ReturnType<typeof drizzle<typeof schema>>;
 
 let database: SaugerDatabase | null = null;
 
-export function getDatabasePath(): string {
+function getDatabasePath(): string {
   const override = process.env.SAUGER_DB_PATH?.trim();
 
   if (!override) {
@@ -64,6 +65,7 @@ export function initDatabase(): SaugerDatabase {
 
   const file = getDatabasePath();
   const migrationsFolder = getMigrationsFolder();
+  const fileExisted = file !== ":memory:" && fs.existsSync(file);
 
   assertMigrationsAvailable(migrationsFolder);
 
@@ -72,7 +74,7 @@ export function initDatabase(): SaugerDatabase {
   }
 
   try {
-    database = createDatabase(file, migrationsFolder);
+    database = createDatabase(file, migrationsFolder, fileExisted);
   } catch (error) {
     if (!isCorruptionError(error)) {
       throw error;
@@ -85,7 +87,7 @@ export function initDatabase(): SaugerDatabase {
     removeDatabaseFiles(file);
 
     try {
-      database = createDatabase(file, migrationsFolder);
+      database = createDatabase(file, migrationsFolder, false);
     } catch (recoveryError) {
       throw new Error(`Unable to recreate the cache database at "${file}".`, {
         cause: recoveryError,
@@ -93,14 +95,17 @@ export function initDatabase(): SaugerDatabase {
     }
   }
 
-  console.log(`[db] Ready at "${file}".`);
+  if (inDevelopment) {
+    console.log(`[db] Ready at "${file}".`);
+  }
 
   return database;
 }
 
 function createDatabase(
   file: string,
-  migrationsFolder: string
+  migrationsFolder: string,
+  fileExisted: boolean
 ): SaugerDatabase {
   const sqlite = new Database(file);
 
@@ -108,12 +113,19 @@ function createDatabase(
     sqlite.pragma("foreign_keys = ON");
     sqlite.pragma("journal_mode = WAL");
 
-    const integrity = sqlite.pragma("quick_check", { simple: true });
-    if (integrity !== "ok") {
-      throw Object.assign(
-        new Error(`SQLite quick_check failed: ${String(integrity)}`),
-        { code: "SQLITE_CORRUPT" }
-      );
+    // The integrity check is O(database size) and blocks startup, so it is
+    // skipped for a freshly created file and can be disabled for large caches.
+    const shouldCheckIntegrity =
+      fileExisted && process.env.SAUGER_SKIP_INTEGRITY_CHECK !== "1";
+
+    if (shouldCheckIntegrity) {
+      const integrity = sqlite.pragma("quick_check", { simple: true });
+      if (integrity !== "ok") {
+        throw Object.assign(
+          new Error(`SQLite quick_check failed: ${String(integrity)}`),
+          { code: "SQLITE_CORRUPT" }
+        );
+      }
     }
 
     const connection = drizzle({ client: sqlite, schema });
