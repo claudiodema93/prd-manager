@@ -48,10 +48,11 @@ export function closeDatabase(): void {
     return;
   }
 
+  // Tighten the sidecars too, before SQLite removes them on close.
+  restrictPermissions(database.$client.name);
   database.$client.close();
   database = null;
 }
-
 /**
  * The database is a disposable cache: on startup it is reset (or, when that is
  * impossible, moved aside and recreated) only when SQLite reports the file as
@@ -103,7 +104,35 @@ export function initDatabase(): CacheDatabase {
     console.log(`[db] Ready at "${location.file}".`);
   }
 
+  restrictPermissions(location.file);
+
   return database;
+}
+
+/**
+ * The cache holds customer names and absolute paths. Keep it readable only by
+ * the current user; SQLite sidecars are created lazily, so they are adjusted
+ * here and again on close.
+ */
+function restrictPermissions(file: string): void {
+  if (process.platform === "win32" || file === MEMORY_DATABASE) {
+    return;
+  }
+
+  try {
+    fs.chmodSync(path.dirname(file), 0o700);
+    fs.chmodSync(file, 0o600);
+
+    for (const suffix of ["-wal", "-shm"]) {
+      const sidecar = `${file}${suffix}`;
+
+      if (fs.existsSync(sidecar)) {
+        fs.chmodSync(sidecar, 0o600);
+      }
+    }
+  } catch (error) {
+    console.warn(`[db] Could not restrict permissions on "${file}".`, error);
+  }
 }
 
 function getDatabasePath(): DatabaseLocation {
@@ -182,11 +211,23 @@ function createDatabase(
  */
 function assertIsSqliteFile(location: DatabaseLocation): void {
   const { file } = location;
-  const stats = fs.statSync(file);
+  const stats = fs.lstatSync(file);
+
+  if (stats.isSymbolicLink()) {
+    throw new Error(
+      `Refusing to use "${file}": it is a symbolic link. The path was not modified.`
+    );
+  }
 
   if (!stats.isFile()) {
     throw new Error(
       `Refusing to use "${file}": it is not a cache database (expected a file). The path was not modified.`
+    );
+  }
+
+  if (stats.nlink > 1) {
+    throw new Error(
+      `Refusing to use "${file}": it has multiple hard links. The path was not modified.`
     );
   }
 
@@ -241,9 +282,10 @@ function notACacheDatabaseError(file: string): Error {
 
 /**
  * Refuses to touch a SQLite file that cannot be shown to belong to this app.
- * A sentinel of 0 means "never claimed", which is adopted for our default
- * location and for files that are recognisably ours (empty, or carrying the
- * Drizzle migrations table). Anything else is left untouched.
+ * A sentinel of 0 means "never claimed": the default location is ours by
+ * definition, and an override is adopted only when it is an empty database (a
+ * new file we are about to initialise). Anything else — including another
+ * Drizzle database, which merely has `__drizzle_migrations` — is left untouched.
  */
 function assertCacheOwnership(
   sqlite: Database.Database,
@@ -285,7 +327,7 @@ function assertCacheOwnership(
   let clearlyOurs: boolean;
 
   try {
-    clearlyOurs = isClearlyOurDatabase(sqlite);
+    clearlyOurs = isEmptyDatabase(sqlite);
   } catch (error) {
     // An unreadable schema on an override path cannot be attributed to this
     // app, so it must not be reset or moved.
@@ -304,19 +346,16 @@ function assertCacheOwnership(
   sqlite.pragma(`application_id = ${CACHE_APPLICATION_ID}`);
 }
 
-function isClearlyOurDatabase(sqlite: Database.Database): boolean {
+function isEmptyDatabase(sqlite: Database.Database): boolean {
   const tables = sqlite
     .prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
     )
     .all() as { name: string }[];
 
-  // An empty database has nothing worth protecting, and the migrations table
-  // is a strong signal that this file was created by Drizzle.
-  return (
-    tables.length === 0 ||
-    tables.some(({ name }) => name === "__drizzle_migrations")
-  );
+  // Only a database with no user tables is safe to adopt: it cannot contain
+  // another application's data.
+  return tables.length === 0;
 }
 
 function shouldCheckIntegrity(): boolean {
@@ -344,7 +383,8 @@ function assertIntegrity(sqlite: Database.Database): void {
 /**
  * Resets the schema inside the existing file. The file itself always survives
  * this path; it is only moved aside when even reading `sqlite_master` or
- * dropping the user tables fails.
+ * dropping the user tables fails. This is only reached after the ownership
+ * check proved the file is ours (sentinel or a newly created empty file).
  */
 function resetDatabaseInPlace(
   location: DatabaseLocation,
@@ -475,7 +515,7 @@ function quoteIdentifier(identifier: string): string {
  * asar, so walk up from the app path instead of trusting `isPackaged`.
  */
 function getMigrationsFolder(): string {
-  const bases = ancestorDirectories(app.getAppPath());
+  const bases = ancestorDirectories(app.getAppPath(), 4);
   const { resourcesPath } = process;
 
   if (typeof resourcesPath === "string" && resourcesPath.length > 0) {
@@ -506,11 +546,11 @@ function getMigrationsFolder(): string {
   );
 }
 
-function ancestorDirectories(start: string): string[] {
+function ancestorDirectories(start: string, maxDepth = 4): string[] {
   const directories: string[] = [];
   let current = path.resolve(start);
 
-  for (;;) {
+  for (let depth = 0; depth <= maxDepth; depth += 1) {
     directories.push(current);
 
     const parent = path.dirname(current);
@@ -532,5 +572,8 @@ function isCorruptionError(error: unknown): boolean {
 
   const { code } = error as { code?: unknown };
 
-  return code === "SQLITE_CORRUPT" || code === "SQLITE_NOTADB";
+  return (
+    code === "SQLITE_NOTADB" ||
+    (typeof code === "string" && code.startsWith("SQLITE_CORRUPT"))
+  );
 }

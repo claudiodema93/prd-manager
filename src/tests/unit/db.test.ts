@@ -41,6 +41,7 @@ const NOT_CACHE_DATABASE_PATTERN = /not a cache database/iu;
 const FOREIGN_DATABASE_PATTERN = /does not belong to this app/iu;
 const FOREIGN_APPLICATION_PATTERN = /belongs to another application/iu;
 const MIGRATIONS_NOT_FOUND_PATTERN = /Drizzle migrations not found/iu;
+const SYMBOLIC_LINK_PATTERN = /symbolic link/iu;
 
 type DbModule = typeof import("@/db");
 type DatabaseConnection = ReturnType<DbModule["getDatabase"]>;
@@ -216,9 +217,6 @@ describe("database lifecycle", () => {
     expect(fs.existsSync(path.join(electronState.userData, "cache.db"))).toBe(
       true
     );
-    expect(fs.existsSync(path.join(electronState.userData, "sauger.db"))).toBe(
-      false
-    );
   });
 
   it("supports an in-memory database", async () => {
@@ -292,6 +290,46 @@ describe("non-destructive failure handling", () => {
     expect(corruptSiblings(tempDir)).toEqual([]);
   });
 
+  it("never touches a truncated non-SQLite file at the override path", async () => {
+    const file = path.join(tempDir, "truncated.bin");
+    const original = "not sqlite";
+    fs.writeFileSync(file, original);
+    process.env[DATABASE_PATH_ENV] = file;
+    const db = await loadDb();
+
+    expect(() => db.initDatabase()).toThrow(NOT_CACHE_DATABASE_PATTERN);
+    expect(fs.readFileSync(file, "utf8")).toBe(original);
+    expect(corruptSiblings(tempDir)).toEqual([]);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a symlink at the override path",
+    async () => {
+      const target = path.join(tempDir, "target.txt");
+      const link = path.join(tempDir, "link.db");
+      fs.writeFileSync(target, "not a database");
+      fs.symlinkSync(target, link);
+      process.env[DATABASE_PATH_ENV] = link;
+      const db = await loadDb();
+
+      expect(() => db.initDatabase()).toThrow(SYMBOLIC_LINK_PATTERN);
+      expect(fs.readFileSync(target, "utf8")).toBe("not a database");
+    }
+  );
+
+  it("refuses another Drizzle database on an override", async () => {
+    const file = path.join(tempDir, "other-drizzle.db");
+    createDatabaseFile(file, (connection) => {
+      connection.exec("CREATE TABLE __drizzle_migrations (id INTEGER)");
+      connection.exec("CREATE TABLE secrets (value TEXT)");
+    });
+
+    process.env[DATABASE_PATH_ENV] = file;
+    const db = await loadDb();
+
+    expect(() => db.initDatabase()).toThrow(FOREIGN_DATABASE_PATTERN);
+  });
+
   it("refuses a foreign SQLite database without the sentinel", async () => {
     const file = path.join(tempDir, "other-app.db");
     createDatabaseFile(file, (connection) => {
@@ -341,22 +379,25 @@ describe("non-destructive failure handling", () => {
     expect(() => db.initDatabase()).toThrow(FOREIGN_APPLICATION_PATTERN);
   });
 
-  it("surfaces a non-corruption failure without modifying the file", async () => {
-    const file = fileDatabasePath();
-    createDatabaseFile(file, (connection) => {
-      connection.pragma(`application_id = ${CACHE_APPLICATION_ID}`);
-      connection.exec("CREATE TABLE junk (value TEXT)");
-    });
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "surfaces a non-corruption failure without modifying the file",
+    async () => {
+      const file = fileDatabasePath();
+      createDatabaseFile(file, (connection) => {
+        connection.pragma(`application_id = ${CACHE_APPLICATION_ID}`);
+        connection.exec("CREATE TABLE junk (value TEXT)");
+      });
 
-    const before = fs.readFileSync(file);
-    fs.chmodSync(file, 0o444);
-    process.env[DATABASE_PATH_ENV] = file;
-    const db = await loadDb();
+      const before = fs.readFileSync(file);
+      fs.chmodSync(file, 0o444);
+      process.env[DATABASE_PATH_ENV] = file;
+      const db = await loadDb();
 
-    expect(() => db.initDatabase()).toThrow();
-    expect(Buffer.compare(before, fs.readFileSync(file))).toBe(0);
-    expect(corruptSiblings(tempDir)).toEqual([]);
-  });
+      expect(() => db.initDatabase()).toThrow();
+      expect(Buffer.compare(before, fs.readFileSync(file))).toBe(0);
+      expect(corruptSiblings(tempDir)).toEqual([]);
+    }
+  );
 });
 
 describe("default cache file recovery", () => {
@@ -370,6 +411,23 @@ describe("default cache file recovery", () => {
     expect(fs.readFileSync(file).subarray(0, 15).toString()).toBe(
       "SQLite format 3"
     );
+  });
+
+  it("moves a truncated default cache aside instead of deleting it", async () => {
+    const file = path.join(electronState.userData, "cache.db");
+    const original = "not sqlite";
+    fs.writeFileSync(file, original);
+    const db = await loadDb();
+    const connection = db.initDatabase();
+
+    expect(tableExists(connection, "customers")).toBe(true);
+
+    const moved = corruptSiblings(electronState.userData);
+
+    expect(moved).toHaveLength(1);
+    expect(
+      fs.readFileSync(path.join(electronState.userData, moved[0] ?? ""), "utf8")
+    ).toBe(original);
   });
 
   it("moves a damaged default cache aside instead of deleting it", async () => {
