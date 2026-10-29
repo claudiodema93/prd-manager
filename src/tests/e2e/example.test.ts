@@ -1,11 +1,10 @@
+import type { ElectronApplication, Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import {
-  type ElectronApplication,
-  _electron as electron,
-  expect,
-  type Page,
-  test,
-} from "@playwright/test";
-import { findLatestBuild, parseElectronApp } from "electron-playwright-helpers";
+  createTempCacheDir,
+  launchPackagedApp,
+  removeTempDir,
+} from "./helpers";
 
 /*
  * Using Playwright with Electron:
@@ -13,15 +12,14 @@ import { findLatestBuild, parseElectronApp } from "electron-playwright-helpers";
  */
 
 let electronApp: ElectronApplication;
+let tempDir: string;
 
 test.beforeAll(async () => {
-  const latestBuild = findLatestBuild();
-  const appInfo = parseElectronApp(latestBuild);
+  const cache = createTempCacheDir();
+  ({ tempDir } = cache);
   process.env.CI = "e2e";
 
-  electronApp = await electron.launch({
-    args: [appInfo.main],
-  });
+  electronApp = await launchPackagedApp(cache.dbPath);
   electronApp.on("window", (page) => {
     const filename = page.url()?.split("/").pop();
     console.log(`Window opened: ${filename}`);
@@ -33,6 +31,11 @@ test.beforeAll(async () => {
       console.log(msg.text());
     });
   });
+});
+
+test.afterAll(async () => {
+  await electronApp?.close();
+  removeTempDir(tempDir);
 });
 
 test("renders the first page", async () => {
