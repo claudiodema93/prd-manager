@@ -63,13 +63,20 @@ function createWindow() {
     width: 800,
   });
   ipcContext.setMainWindow(mainWindow);
+  mainWindow.on("closed", () => {
+    if (ipcContext.mainWindow === mainWindow) {
+      ipcContext.mainWindow = undefined;
+    }
+  });
 
   // Never let the renderer spawn additional windows (`window.open`,
   // `target="_blank"`). External links go through the validated
   // `shell.openExternal` IPC procedure instead.
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
-  // Never let the app window navigate to a foreign origin or protocol.
+  // Never let the app window navigate to a foreign origin or protocol. The
+  // same rule applies to server redirects and to subframes (which may only stay
+  // on about:blank).
   mainWindow.webContents.on("will-navigate", (event, url) => {
     if (isAllowedNavigation(url)) {
       return;
@@ -77,6 +84,28 @@ function createWindow() {
 
     event.preventDefault();
     console.warn("[security] Blocked a navigation away from the app.");
+  });
+
+  mainWindow.webContents.on("will-redirect", (details) => {
+    const allowed = details.isMainFrame
+      ? isAllowedNavigation(details.url)
+      : details.url === "about:blank";
+
+    if (!allowed) {
+      details.preventDefault();
+      console.warn("[security] Blocked a redirect away from the app.");
+    }
+  });
+
+  mainWindow.webContents.on("will-frame-navigate", (details) => {
+    const allowed = details.isMainFrame
+      ? isAllowedNavigation(details.url)
+      : details.url === "about:blank";
+
+    if (!allowed) {
+      details.preventDefault();
+      console.warn("[security] Blocked a frame navigation.");
+    }
   });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
@@ -129,7 +158,23 @@ async function setupORPC() {
   const { rpcHandler } = await import("./ipc/handler");
 
   ipcMain.on(IPC_CHANNELS.START_ORPC_SERVER, (event) => {
+    const { mainWindow } = ipcContext;
+
+    // Only the top frame of our own window may upgrade a MessagePort.
+    if (
+      !mainWindow ||
+      event.sender !== mainWindow.webContents ||
+      !event.senderFrame ||
+      event.senderFrame.parent !== null
+    ) {
+      return;
+    }
+
     const [serverPort] = event.ports;
+
+    if (!serverPort) {
+      return;
+    }
 
     serverPort.start();
     rpcHandler.upgrade(serverPort);
@@ -142,7 +187,10 @@ if (hasSingleInstanceLock) {
   app.on("second-instance", () => {
     const { mainWindow } = ipcContext;
 
-    if (!mainWindow) {
+    // After the window was closed on macOS the reference is destroyed, and
+    // calling show()/focus() on it would throw. Recreate it instead.
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      createWindow();
       return;
     }
 
@@ -164,8 +212,13 @@ if (hasSingleInstanceLock) {
       // oRPC listener must be registered before the window is created.
       await setupORPC();
       createWindow();
-      await installExtensions();
       checkForUpdates();
+
+      // DevTools extensions are fetched from the Chrome Web Store at runtime;
+      // never do that in a production build.
+      if (inDevelopment) {
+        await installExtensions();
+      }
     } catch (error) {
       console.error("Error during app initialization:", error);
     }

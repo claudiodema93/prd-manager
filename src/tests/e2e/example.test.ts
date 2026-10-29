@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 import {
@@ -19,9 +17,8 @@ let tempDir: string;
 test.beforeAll(async () => {
   const cache = createTempCacheDir();
   ({ tempDir } = cache);
-  process.env.CI = "e2e";
 
-  electronApp = await launchPackagedApp(cache.dbPath);
+  electronApp = await launchPackagedApp(cache.dbPath, cache.tempDir);
   electronApp.on("window", (page) => {
     const filename = page.url()?.split("/").pop();
     console.log(`Window opened: ${filename}`);
@@ -50,11 +47,41 @@ test("renders the first page", async () => {
 
 test("exchanges data with the main process over the sandboxed IPC bridge", async () => {
   const page: Page = await electronApp.firstWindow();
-  const { version } = JSON.parse(
-    fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8")
-  ) as { version: string };
+  const version = await electronApp.evaluate(({ app }) => app.getVersion());
 
   // The version arrives through the preload MessagePort bridge; it stays at the
   // placeholder when the bridge is broken.
   await expect(page.getByText(`v${version}`)).toBeVisible({ timeout: 10_000 });
+});
+
+test("runs the renderer without Node integration", async () => {
+  const page: Page = await electronApp.firstWindow();
+
+  expect(
+    await page.evaluate(
+      () => typeof (globalThis as { process?: unknown }).process
+    )
+  ).toBe("undefined");
+  expect(
+    await page.evaluate(
+      () => typeof (globalThis as { require?: unknown }).require
+    )
+  ).toBe("undefined");
+});
+
+test("blocks window.open and off-app navigation", async () => {
+  const page: Page = await electronApp.firstWindow();
+  const before = page.url();
+
+  expect(
+    await page.evaluate(() => window.open("https://example.com"))
+  ).toBeNull();
+
+  await page.evaluate(() => {
+    window.location.href = "https://example.com/";
+  });
+  await page.waitForTimeout(300);
+
+  expect(page.url()).toBe(before);
+  expect(electronApp.windows()).toHaveLength(1);
 });

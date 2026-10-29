@@ -42,6 +42,39 @@ function listTables(file: string): string[] {
   }
 }
 
+function countCustomers(file: string): number {
+  const probe = new Database(file, { readonly: true });
+
+  try {
+    return (
+      probe.prepare("SELECT COUNT(*) AS count FROM customers").get() as {
+        count: number;
+      }
+    ).count;
+  } finally {
+    probe.close();
+  }
+}
+
+/**
+ * Adds data that a successful in-place reset must discard: a customer row and
+ * an unrelated table.
+ */
+function seedStaleData(file: string): void {
+  const database = new Database(file);
+
+  try {
+    database.exec("CREATE TABLE junk (value TEXT)");
+    database
+      .prepare(
+        "INSERT INTO customers (folder_path, customer_code, folder_name, folder_mtime_ms, status) VALUES (?, ?, ?, ?, ?)"
+      )
+      .run("/customers/stale", "STALE-001", "Stale", 1, "ok");
+  } finally {
+    database.close();
+  }
+}
+
 /**
  * The cache database is disposable: it must be created on first launch and
  * transparently recreated when the existing file is corrupt.
@@ -65,13 +98,16 @@ test.describe
       }
     });
 
-    async function launchFresh(dbPath: string): Promise<ElectronApplication> {
+    async function launchFresh(
+      dbPath: string,
+      homeDir: string
+    ): Promise<ElectronApplication> {
       if (currentApp) {
         await currentApp.close().catch(() => undefined);
         currentApp = undefined;
       }
 
-      currentApp = await launchPackagedApp(dbPath);
+      currentApp = await launchPackagedApp(dbPath, homeDir);
       openApps.push(currentApp);
 
       return currentApp;
@@ -81,7 +117,7 @@ test.describe
       const { dbPath, tempDir } = createTempCacheDir();
       tempDirs.push(tempDir);
 
-      const app = await launchFresh(dbPath);
+      const app = await launchFresh(dbPath, tempDir);
       const page = await app.firstWindow();
       await page.waitForSelector("h1");
 
@@ -93,7 +129,7 @@ test.describe
       const { dbPath, tempDir } = createTempCacheDir();
       tempDirs.push(tempDir);
 
-      const first = await launchFresh(dbPath);
+      const first = await launchFresh(dbPath, tempDir);
       const firstPage = await first.firstWindow();
       await firstPage.waitForSelector("h1");
 
@@ -102,17 +138,28 @@ test.describe
       await first.close();
       currentApp = undefined;
 
+      seedStaleData(dbPath);
+      expect(countCustomers(dbPath)).toBe(1);
+
       corruptDatabaseHeader(dbPath);
 
-      const app = await launchFresh(dbPath);
+      const app = await launchFresh(dbPath, tempDir);
       const page = await app.firstWindow();
       await page.waitForSelector("h1");
 
       await app.close();
       currentApp = undefined;
 
-      // The file survives and the schema is rebuilt; nothing is deleted.
+      const tables = listTables(dbPath);
+
+      // The file survives, the schema is rebuilt in place and the stale data is
+      // gone: nothing was deleted and no move-aside copy was needed.
       expect(readHeader(dbPath)).toBe(SQLITE_HEADER);
-      expect(listTables(dbPath)).toContain("customers");
+      expect(tables).toContain("customers");
+      expect(tables).not.toContain("junk");
+      expect(countCustomers(dbPath)).toBe(0);
+      expect(
+        fs.readdirSync(tempDir).filter((name) => name.includes(".corrupt-"))
+      ).toEqual([]);
     });
   });

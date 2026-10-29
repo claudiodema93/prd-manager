@@ -31,15 +31,20 @@ export function createTempCacheDir(): { dbPath: string; tempDir: string } {
 }
 
 export function launchPackagedApp(
-  dbPath: string
+  dbPath: string,
+  homeDir: string
 ): Promise<ElectronApplication> {
   const { executable } = parseElectronApp(findLatestBuild());
 
   return electron.launch({
     env: {
       ...getProcessEnv(),
+      // Isolate Electron's userData (and therefore the single-instance lock)
+      // from the developer's real profile.
+      APPDATA: homeDir,
+      HOME: homeDir,
       SAUGER_CACHE_DB_PATH: dbPath,
-      SAUGER_CACHE_SKIP_INTEGRITY_CHECK: "0",
+      XDG_CONFIG_HOME: path.join(homeDir, ".config"),
     },
     executablePath: executable,
   });
