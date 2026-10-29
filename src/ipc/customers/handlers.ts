@@ -57,6 +57,7 @@ export const upsertCustomer = os
   .input(upsertCustomerInputSchema)
   .handler(({ input }) => {
     const db = getDatabase();
+    // Insert needs every column, so omitted optional fields become NULL.
     const row = {
       articleSchemaVersion: input.articleSchemaVersion ?? null,
       customerCode: input.customerCode,
@@ -70,10 +71,32 @@ export const upsertCustomer = os
       status: input.status,
     };
 
+    // Update uses patch semantics: an omitted optional field keeps its stored
+    // value, while an explicit `null` clears it.
+    const updates = {
+      ...(input.articleSchemaVersion === undefined
+        ? {}
+        : { articleSchemaVersion: input.articleSchemaVersion }),
+      customerCode: input.customerCode,
+      folderMtimeMs: input.folderMtimeMs,
+      folderName: input.folderName,
+      ...(input.metadataJson === undefined
+        ? {}
+        : { metadataJson: input.metadataJson }),
+      ...(input.name === undefined ? {} : { name: input.name }),
+      ...(input.revisionSchemaVersion === undefined
+        ? {}
+        : { revisionSchemaVersion: input.revisionSchemaVersion }),
+      ...(input.schemaVersion === undefined
+        ? {}
+        : { schemaVersion: input.schemaVersion }),
+      status: input.status,
+    };
+
     const [customer] = db
       .insert(customers)
       .values(row)
-      .onConflictDoUpdate({ set: row, target: customers.folderPath })
+      .onConflictDoUpdate({ set: updates, target: customers.folderPath })
       .returning()
       .all();
 

@@ -1,13 +1,33 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import { MakerDeb } from "@electron-forge/maker-deb";
 import { MakerRpm } from "@electron-forge/maker-rpm";
 import { MakerSquirrel } from "@electron-forge/maker-squirrel";
 import { MakerZIP } from "@electron-forge/maker-zip";
+import { AutoUnpackNativesPlugin } from "@electron-forge/plugin-auto-unpack-natives";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import type { ForgeConfig } from "@electron-forge/shared-types";
 
 const config: ForgeConfig = {
+  hooks: {
+    // The Vite plugin only copies the `.vite` output, so runtime dependencies
+    // that are externalized from the bundle (native modules) must be added here.
+    packageAfterCopy: async (_forgeConfig, buildPath) => {
+      const source = path.resolve(
+        import.meta.dirname,
+        "node_modules/better-sqlite3"
+      );
+      const destination = path.join(
+        buildPath,
+        "node_modules",
+        "better-sqlite3"
+      );
+
+      await fs.cp(source, destination, { recursive: true });
+    },
+  },
   makers: [
     new MakerSquirrel({}),
     new MakerZIP({}, ["darwin"]),
@@ -19,6 +39,7 @@ const config: ForgeConfig = {
     extraResource: ["./drizzle"],
   },
   plugins: [
+    new AutoUnpackNativesPlugin({}),
     new VitePlugin({
       build: [
         {

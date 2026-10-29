@@ -6,7 +6,6 @@ import {
   REACT_DEVELOPER_TOOLS,
 } from "electron-devtools-installer";
 import { UpdateSourceType, updateElectronApp } from "update-electron-app";
-import { initDatabase } from "@/db";
 import { ipcContext } from "@/ipc/context";
 import { IPC_CHANNELS, inDevelopment } from "./constants";
 import { getBasePath } from "./utils/path";
@@ -58,8 +57,11 @@ function checkForUpdates() {
   });
 }
 
-function initializeDatabase(): boolean {
+async function initializeDatabase(): Promise<boolean> {
   try {
+    // Imported lazily so that a native-module load failure stays inside this
+    // try/catch instead of crashing before the error dialog can be shown.
+    const { initDatabase } = await import("@/db");
     initDatabase();
 
     return true;
@@ -69,7 +71,7 @@ function initializeDatabase(): boolean {
       "Database error",
       "The local database could not be created, so the application will close."
     );
-    app.quit();
+    app.exit(1);
 
     return false;
   }
@@ -86,20 +88,43 @@ async function setupORPC() {
   });
 }
 
-app.whenReady().then(async () => {
-  try {
-    if (!initializeDatabase()) {
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (hasSingleInstanceLock) {
+  app.on("second-instance", () => {
+    const { mainWindow } = ipcContext;
+
+    if (!mainWindow) {
       return;
     }
 
-    createWindow();
-    await installExtensions();
-    checkForUpdates();
-    await setupORPC();
-  } catch (error) {
-    console.error("Error during app initialization:", error);
-  }
-});
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+
+    mainWindow.show();
+    mainWindow.focus();
+  });
+
+  app.whenReady().then(async () => {
+    try {
+      if (!(await initializeDatabase())) {
+        return;
+      }
+
+      // The renderer posts its MessagePort while evaluating its bundle, so the
+      // oRPC listener must be registered before the window is created.
+      await setupORPC();
+      createWindow();
+      await installExtensions();
+      checkForUpdates();
+    } catch (error) {
+      console.error("Error during app initialization:", error);
+    }
+  });
+} else {
+  app.quit();
+}
 
 //osX only
 app.on("window-all-closed", () => {
