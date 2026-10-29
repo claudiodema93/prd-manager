@@ -56,11 +56,9 @@ function createWindow() {
       nodeIntegrationInSubFrames: false,
 
       preload,
-      // Keep the preload bridge working exactly as before: the renderer was
-      // previously unsandboxed because `nodeIntegration: true` implies it.
-      // TODO(security): migrate the preload/MessagePort bridge to a
-      // sandbox-compatible setup, then remove this and enable the sandbox.
-      sandbox: false,
+      // The preload only uses `ipcRenderer` and DOM APIs to forward the
+      // MessagePort, so it runs unchanged inside Electron's sandbox.
+      sandbox: true,
     },
     width: 800,
   });
