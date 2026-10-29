@@ -98,7 +98,7 @@ async function installExtensions() {
 function checkForUpdates() {
   updateElectronApp({
     updateSource: {
-      repo: "LuanRoger/electron-shadcn",
+      repo: "claudiodema93/prd-manager",
       type: UpdateSourceType.ElectronPublicUpdateService,
     },
   });

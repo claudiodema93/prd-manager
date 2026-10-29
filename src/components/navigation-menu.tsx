@@ -27,7 +27,7 @@ export default function NavigationMenu() {
         </NavigationMenuItem>
         <NavigationMenuItem>
           <NavigationMenuLink asChild className={navigationMenuTriggerStyle()}>
-            <ExternalLink href="https://docs.luanroger.dev/electron-shadcn/docs/overview">
+            <ExternalLink href="https://github.com/claudiodema93/prd-manager">
               {t("documentation")}
             </ExternalLink>
           </NavigationMenuLink>

@@ -8,7 +8,7 @@ export default function BaseLayout({
 }) {
   return (
     <>
-      <DragWindowRegion title="electron-shadcn" />
+      <DragWindowRegion title="PrdManager" />
       <main className="h-screen p-2 pb-20">{children}</main>
     </>
   );

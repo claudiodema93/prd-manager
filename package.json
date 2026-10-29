@@ -1,10 +1,10 @@
 {
-  "name": "electron-shadcn",
+  "name": "prd-manager",
   "version": "1.4.1",
   "private": true,
-  "description": "Electron Forge with shadcn-ui (Vite + Typescript)",
+  "description": "PrdManager desktop application",
   "license": "MIT",
-  "author": "ROG <luanroger.dev@gmail.com>",
+  "author": "Claudio De Martino",
   "main": ".vite/build/main.cjs",
   "scripts": {
     "bump-ui": "tsx ./scripts/bump-ui.ts",
@@ -98,5 +98,5 @@
   "engines": {
     "node": ">=26.13.0"
   },
-  "productName": "electron-shadcn"
+  "productName": "PrdManager"
 }

@@ -6,18 +6,18 @@ i18n.use(initReactI18next).init({
   resources: {
     en: {
       translation: {
-        appName: "electron-shadcn",
+        appName: "PrdManager",
         documentation: "Documentation",
-        madeBy: "Made by LuanRoger",
+        madeBy: "Made by Claudio De Martino",
         titleHomePage: "Home Page",
         titleSecondPage: "Second Page",
       },
     },
     "pt-BR": {
       translation: {
-        appName: "electron-shadcn",
+        appName: "PrdManager",
         documentation: "Documentação",
-        madeBy: "Feito por LuanRoger",
+        madeBy: "Feito por Claudio De Martino",
         titleHomePage: "Página Inicial",
         titleSecondPage: "Segunda Página",
       },
