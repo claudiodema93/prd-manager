@@ -4,7 +4,6 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { app } from "electron";
-import { inDevelopment } from "../constants";
 import { customers } from "./schema";
 
 const schema = { customers };
@@ -23,15 +22,19 @@ const DEFAULT_DATABASE_FILE = "cache.db";
 const DATABASE_PATH_ENV = "SAUGER_CACHE_DB_PATH";
 const SKIP_INTEGRITY_CHECK_ENV = "SAUGER_CACHE_SKIP_INTEGRITY_CHECK";
 const MEMORY_DATABASE = ":memory:";
+const SIDECAR_SUFFIXES = ["-wal", "-shm", "-journal"] as const;
 
 export type CacheDatabase = ReturnType<typeof drizzle<typeof schema>>;
-
-let database: CacheDatabase | null = null;
 
 interface DatabaseLocation {
   file: string;
   isDefault: boolean;
 }
+
+let database: CacheDatabase | null = null;
+// Remembered so `closeDatabase` can re-tighten the file and sidecars without
+// the caller having to pass the location again.
+let currentLocation: DatabaseLocation | null = null;
 
 export function getDatabase(): CacheDatabase {
   if (!database) {
@@ -49,10 +52,15 @@ export function closeDatabase(): void {
   }
 
   // Tighten the sidecars too, before SQLite removes them on close.
-  restrictPermissions(database.$client.name);
+  if (currentLocation) {
+    restrictPermissions(currentLocation);
+  }
+
   database.$client.close();
   database = null;
+  currentLocation = null;
 }
+
 /**
  * The database is a disposable cache: on startup it is reset (or, when that is
  * impossible, moved aside and recreated) only when SQLite reports the file as
@@ -70,20 +78,34 @@ export function initDatabase(): CacheDatabase {
   const isMemory = location.file === MEMORY_DATABASE;
 
   let fileExisted = false;
+  let fileStats: fs.Stats | undefined;
 
   if (!isMemory) {
     fs.mkdirSync(path.dirname(location.file), { recursive: true });
+
+    // `existsSync` follows symlinks, so a dangling link would look absent and
+    // SQLite would happily create its target. Decide existence with `lstat`
+    // and refuse any link (including one that dangles) before opening.
+    fileStats = fs.lstatSync(location.file, { throwIfNoEntry: false });
+    assertNotSymlink(location.file, fileStats);
+
+    for (const suffix of SIDECAR_SUFFIXES) {
+      const sidecar = `${location.file}${suffix}`;
+      const stats = fs.lstatSync(sidecar, { throwIfNoEntry: false });
+
+      assertNotSymlink(sidecar, stats);
+    }
   }
 
   try {
     if (!isMemory) {
-      fileExisted = fs.existsSync(location.file);
+      fileExisted = fileStats !== undefined;
 
       // Read-only check: a file that is not a SQLite database is never opened
       // for writing, never reset, and never moved. This guards against a stale
       // or mistaken env var pointing at an unrelated user file.
-      if (fileExisted) {
-        assertIsSqliteFile(location);
+      if (fileStats) {
+        assertIsSqliteFile(location, fileStats);
       }
     }
 
@@ -100,36 +122,72 @@ export function initDatabase(): CacheDatabase {
     database = recoverDatabase(location, migrationsFolder);
   }
 
-  if (inDevelopment) {
+  if (!app.isPackaged) {
     console.log(`[db] Ready at "${location.file}".`);
   }
 
-  restrictPermissions(location.file);
+  currentLocation = location;
+  restrictPermissions(location);
 
   return database;
+}
+
+/**
+ * Refuses symbolic links (including dangling ones) before SQLite opens the
+ * path, so the link's target is never created or modified.
+ */
+function assertNotSymlink(file: string, stats: fs.Stats | undefined): void {
+  if (stats?.isSymbolicLink()) {
+    throw new Error(
+      `Refusing to use "${file}": it is a symbolic link. The path was not modified.`
+    );
+  }
 }
 
 /**
  * The cache holds customer names and absolute paths. Keep it readable only by
  * the current user; SQLite sidecars are created lazily, so they are adjusted
  * here and again on close.
+ *
+ * The parent directory is only tightened for the default `userData` location:
+ * an override such as `/tmp/cache.db` must not chmod `/tmp` (or `$HOME`).
  */
-function restrictPermissions(file: string): void {
+function restrictPermissions(location: DatabaseLocation): void {
+  const { file } = location;
+
   if (process.platform === "win32" || file === MEMORY_DATABASE) {
     return;
   }
 
-  try {
-    fs.chmodSync(path.dirname(file), 0o700);
-    fs.chmodSync(file, 0o600);
-
-    for (const suffix of ["-wal", "-shm"]) {
-      const sidecar = `${file}${suffix}`;
-
-      if (fs.existsSync(sidecar)) {
-        fs.chmodSync(sidecar, 0o600);
-      }
+  if (location.isDefault) {
+    try {
+      fs.chmodSync(path.dirname(file), 0o700);
+    } catch (error) {
+      console.warn(
+        `[db] Could not restrict permissions on "${path.dirname(file)}".`,
+        error
+      );
     }
+  }
+
+  restrictFilePermissions(file);
+
+  for (const suffix of ["-wal", "-shm"] as const) {
+    const sidecar = `${file}${suffix}`;
+
+    if (fs.existsSync(sidecar)) {
+      restrictFilePermissions(sidecar);
+    }
+  }
+}
+
+function restrictFilePermissions(file: string): void {
+  if (process.platform === "win32") {
+    return;
+  }
+
+  try {
+    fs.chmodSync(file, 0o600);
   } catch (error) {
     console.warn(`[db] Could not restrict permissions on "${file}".`, error);
   }
@@ -209,15 +267,8 @@ function createDatabase(
  * never by deleting it), so a truncated or header-damaged cache cannot wedge
  * startup forever.
  */
-function assertIsSqliteFile(location: DatabaseLocation): void {
+function assertIsSqliteFile(location: DatabaseLocation, stats: fs.Stats): void {
   const { file } = location;
-  const stats = fs.lstatSync(file);
-
-  if (stats.isSymbolicLink()) {
-    throw new Error(
-      `Refusing to use "${file}": it is a symbolic link. The path was not modified.`
-    );
-  }
 
   if (!stats.isFile()) {
     throw new Error(
@@ -473,12 +524,16 @@ function moveDatabaseAside(file: string): string {
   const target = nextCorruptPath(file);
 
   fs.renameSync(file, target);
+  restrictFilePermissions(target);
 
-  for (const suffix of ["-wal", "-shm", "-journal"]) {
+  for (const suffix of SIDECAR_SUFFIXES) {
     const sidecar = `${file}${suffix}`;
 
     if (fs.existsSync(sidecar)) {
-      fs.renameSync(sidecar, `${target}${suffix}`);
+      const movedSidecar = `${target}${suffix}`;
+
+      fs.renameSync(sidecar, movedSidecar);
+      restrictFilePermissions(movedSidecar);
     }
   }
 
@@ -499,7 +554,7 @@ function nextCorruptPath(file: string): string {
 }
 
 function corruptPathExists(candidate: string): boolean {
-  return ["", "-wal", "-shm", "-journal"].some((suffix) =>
+  return ["", ...SIDECAR_SUFFIXES].some((suffix) =>
     fs.existsSync(`${candidate}${suffix}`)
   );
 }

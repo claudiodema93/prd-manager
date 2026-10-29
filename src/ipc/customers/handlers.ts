@@ -13,8 +13,6 @@ import {
   upsertCustomerOutputSchema,
 } from "./schemas";
 
-type CustomersDatabase = ReturnType<typeof getDatabase>;
-
 // List responses only need summary columns; metadata is fetched on demand.
 const customerSummaryColumns = {
   articleSchemaVersion: customers.articleSchemaVersion,
@@ -30,22 +28,18 @@ const customerSummaryColumns = {
   updatedAt: customers.updatedAt,
 };
 
-// SQLite's built-in `lower()` only folds ASCII, so non-ASCII names such as
-// "MÜLLER GmbH" could not be matched. This registers a Unicode-aware function
-// on each connection, and a WeakSet keeps the registration idempotent.
-const cacheLowerConnections = new WeakSet<object>();
-
-function registerCacheLower(db: CustomersDatabase): void {
-  const client = db.$client;
-
-  if (cacheLowerConnections.has(client)) {
-    return;
-  }
-
-  client.function("cache_lower", { deterministic: true }, (value) =>
-    typeof value === "string" ? value.toLocaleLowerCase() : value
-  );
-  cacheLowerConnections.add(client);
+// The search column stores the three user-visible values pre-folded to NFC and
+// lower case, so `instr(search_text, ?)` matches non-ASCII text regardless of
+// case or Unicode composition without a per-row JavaScript function.
+function normalizeSearchText(
+  customerCode: string,
+  folderName: string,
+  name: string | null
+): string {
+  return [customerCode, folderName, name ?? ""]
+    .join(" ")
+    .normalize("NFC")
+    .toLocaleLowerCase();
 }
 
 export const listCustomers = os
@@ -53,25 +47,21 @@ export const listCustomers = os
   .output(listCustomersOutputSchema)
   .handler(({ input }) => {
     const db = getDatabase();
-    registerCacheLower(db);
-
-    const searchPattern = input.search
-      ? `%${escapeLikePattern(input.search.toLocaleLowerCase())}%`
-      : undefined;
+    const searchTerm = input.search?.normalize("NFC").toLocaleLowerCase();
 
     const where = and(
       input.status ? eq(customers.status, input.status) : undefined,
-      searchPattern
-        ? sql`(
-            cache_lower(${customers.customerCode}) LIKE ${searchPattern} ESCAPE '\\'
-            OR cache_lower(${customers.folderName}) LIKE ${searchPattern} ESCAPE '\\'
-            OR cache_lower(${customers.name}) LIKE ${searchPattern} ESCAPE '\\'
-          )`
+      searchTerm
+        ? sql`instr(${customers.searchText}, ${searchTerm}) > 0`
         : undefined
     );
 
-    const items = db
-      .select(customerSummaryColumns)
+    const rows = db
+      .select({
+        ...customerSummaryColumns,
+        // Window function: one scan returns the page and the full total.
+        total: sql<number>`count(*) over ()`,
+      })
       .from(customers)
       .where(where)
       .orderBy(
@@ -83,11 +73,15 @@ export const listCustomers = os
       .offset(input.offset)
       .all();
 
-    const [{ total }] = db
-      .select({ total: count() })
-      .from(customers)
-      .where(where)
-      .all();
+    // `count(*) over ()` yields no rows when the offset is past the end, so the
+    // total is only fetched separately for an empty page.
+    const total =
+      rows[0]?.total ??
+      db.select({ total: count() }).from(customers).where(where).all()[0]
+        ?.total ??
+      0;
+
+    const items = rows.map(({ total: _total, ...item }) => item);
 
     return { items, total };
   });
@@ -115,6 +109,22 @@ export const upsertCustomer = os
     const db = getDatabase();
     const now = Date.now();
 
+    // A partial update keeps the stored name, so the search text must be built
+    // from the value that will actually be persisted.
+    const effectiveName =
+      input.name === undefined
+        ? (db
+            .select({ name: customers.name })
+            .from(customers)
+            .where(eq(customers.folderPath, input.folderPath))
+            .get()?.name ?? null)
+        : input.name;
+    const searchText = normalizeSearchText(
+      input.customerCode,
+      input.folderName,
+      effectiveName
+    );
+
     // Insert needs every column, so omitted optional fields become NULL.
     const row = {
       articleSchemaVersion: input.articleSchemaVersion ?? null,
@@ -127,6 +137,7 @@ export const upsertCustomer = os
       name: input.name ?? null,
       revisionSchemaVersion: input.revisionSchemaVersion ?? null,
       schemaVersion: input.schemaVersion ?? null,
+      searchText,
       status: input.status,
       updatedAt: now,
     };
@@ -150,6 +161,7 @@ export const upsertCustomer = os
       ...(input.schemaVersion === undefined
         ? {}
         : { schemaVersion: input.schemaVersion }),
+      searchText,
       status: input.status,
       updatedAt: now,
     };
@@ -190,7 +202,3 @@ export const clearCustomers = os
 
     return db.delete(customers).run().changes;
   });
-
-function escapeLikePattern(value: string): string {
-  return value.replace(/[\\%_]/gu, (match) => `\\${match}`);
-}

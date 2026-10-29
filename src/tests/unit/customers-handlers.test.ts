@@ -196,6 +196,46 @@ describe("customers handlers", () => {
     ]);
   });
 
+  it("matches composed and decomposed Unicode spellings", async () => {
+    const composed = "Müller";
+    const decomposed = composed.normalize("NFD");
+
+    // Store one row in each Unicode form and search using both.
+    await call(upsertCustomer, {
+      ...acme,
+      customerCode: "NFD-001",
+      folderName: decomposed,
+      folderPath: "/customers/nfd",
+    });
+    await call(upsertCustomer, {
+      ...acme,
+      customerCode: "NFC-001",
+      folderName: composed,
+      folderPath: "/customers/nfc",
+    });
+
+    const viaComposed = await call(listCustomers, { search: composed });
+    const viaDecomposed = await call(listCustomers, { search: decomposed });
+
+    expect(viaComposed.items.map((item) => item.customerCode)).toEqual([
+      "NFC-001",
+      "NFD-001",
+    ]);
+    expect(viaDecomposed.items.map((item) => item.customerCode)).toEqual([
+      "NFC-001",
+      "NFD-001",
+    ]);
+  });
+
+  it("keeps a stored name searchable after a partial upsert", async () => {
+    await call(upsertCustomer, { ...acme, name: "Mario" });
+    await call(upsertCustomer, { ...acme, folderMtimeMs: 2 });
+
+    const result = await call(listCustomers, { search: "mario" });
+
+    expect(result.items.map((item) => item.customerCode)).toEqual(["ACME-001"]);
+  });
+
   it("searches by code even when the name is NULL", async () => {
     await call(upsertCustomer, acme);
 

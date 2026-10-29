@@ -164,6 +164,11 @@ function corruptSiblings(directory: string): string[] {
   return fs.readdirSync(directory).filter((name) => name.includes(".corrupt-"));
 }
 
+/** Permission bits (rwx) without the file-type bits. */
+function permissionBits(file: string): number {
+  return fs.statSync(file).mode % 0o1000;
+}
+
 function copyMigrations(base: string): void {
   fs.cpSync(path.join(PROJECT_ROOT, "drizzle"), path.join(base, "drizzle"), {
     recursive: true,
@@ -275,6 +280,23 @@ describe("database path handling", () => {
     );
     expect(connection.$client.pragma("foreign_keys", { simple: true })).toBe(1);
   });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "restricts the override database without touching its parent directory",
+    async () => {
+      const overrideDirectory = path.join(tempDir, "override");
+      fs.mkdirSync(overrideDirectory, { recursive: true });
+      fs.chmodSync(overrideDirectory, 0o755);
+      const file = path.join(overrideDirectory, "cache.db");
+      process.env[DATABASE_PATH_ENV] = file;
+      const db = await loadDb();
+
+      db.initDatabase();
+
+      expect(permissionBits(overrideDirectory)).toBe(0o755);
+      expect(permissionBits(file)).toBe(0o600);
+    }
+  );
 });
 
 describe("non-destructive failure handling", () => {
@@ -314,6 +336,35 @@ describe("non-destructive failure handling", () => {
 
       expect(() => db.initDatabase()).toThrow(SYMBOLIC_LINK_PATTERN);
       expect(fs.readFileSync(target, "utf8")).toBe("not a database");
+    }
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a dangling symlink at the override path without creating its target",
+    async () => {
+      const target = path.join(tempDir, "missing-target.db");
+      const link = path.join(tempDir, "dangling.db");
+      fs.symlinkSync(target, link);
+      process.env[DATABASE_PATH_ENV] = link;
+      const db = await loadDb();
+
+      expect(() => db.initDatabase()).toThrow(SYMBOLIC_LINK_PATTERN);
+      expect(fs.existsSync(target)).toBe(false);
+    }
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a dangling symlink at a sidecar path before opening the database",
+    async () => {
+      const file = path.join(tempDir, "cache.db");
+      const walTarget = path.join(tempDir, "missing-wal");
+      fs.symlinkSync(walTarget, `${file}-wal`);
+      process.env[DATABASE_PATH_ENV] = file;
+      const db = await loadDb();
+
+      expect(() => db.initDatabase()).toThrow(SYMBOLIC_LINK_PATTERN);
+      expect(fs.existsSync(file)).toBe(false);
+      expect(fs.existsSync(walTarget)).toBe(false);
     }
   );
 
