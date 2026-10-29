@@ -1,4 +1,5 @@
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { app, BrowserWindow, dialog } from "electron";
 import { ipcMain } from "electron/main";
 import {
@@ -9,6 +10,34 @@ import { UpdateSourceType, updateElectronApp } from "update-electron-app";
 import { ipcContext } from "@/ipc/context";
 import { IPC_CHANNELS, inDevelopment } from "./constants";
 import { getBasePath } from "./utils/path";
+
+function getRendererEntryPath() {
+  return path.join(
+    getBasePath(),
+    `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`
+  );
+}
+
+/**
+ * Whether the main window may navigate to `target`.
+ *
+ * In development only the Vite dev-server origin is trusted; in production the
+ * renderer uses in-memory routing, so the bundled entry document is the only
+ * legitimate navigation target.
+ */
+function isAllowedNavigation(target: string): boolean {
+  try {
+    const url = new URL(target);
+
+    if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+      return url.origin === new URL(MAIN_WINDOW_VITE_DEV_SERVER_URL).origin;
+    }
+
+    return url.toString() === pathToFileURL(getRendererEntryPath()).toString();
+  } catch {
+    return false;
+  }
+}
 
 function createWindow() {
   const basePath = getBasePath();
@@ -21,21 +50,41 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       devTools: inDevelopment,
-      nodeIntegration: true,
+      // The renderer bundle only uses browser APIs (Vite inlines
+      // `process.env.NODE_ENV` at build time), so it does not need Node.
+      nodeIntegration: false,
       nodeIntegrationInSubFrames: false,
 
       preload,
+      // Keep the preload bridge working exactly as before: the renderer was
+      // previously unsandboxed because `nodeIntegration: true` implies it.
+      // TODO(security): migrate the preload/MessagePort bridge to a
+      // sandbox-compatible setup, then remove this and enable the sandbox.
+      sandbox: false,
     },
     width: 800,
   });
   ipcContext.setMainWindow(mainWindow);
 
+  // Never let the renderer spawn additional windows (`window.open`,
+  // `target="_blank"`). External links go through the validated
+  // `shell.openExternal` IPC procedure instead.
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+
+  // Never let the app window navigate to a foreign origin or protocol.
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (isAllowedNavigation(url)) {
+      return;
+    }
+
+    event.preventDefault();
+    console.warn("[security] Blocked a navigation away from the app.");
+  });
+
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
-    mainWindow.loadFile(
-      path.join(basePath, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)
-    );
+    mainWindow.loadFile(getRendererEntryPath());
   }
 }
 

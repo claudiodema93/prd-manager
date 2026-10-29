@@ -1,6 +1,14 @@
+import { ORPCError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/message-port";
 import { router } from "./router";
 
+/**
+ * Errors are masked towards the renderer, so the real cause is logged here for
+ * diagnostics. Only unexpected failures are logged as errors: an `ORPCError`
+ * with a 4xx status is an expected, client-caused outcome (NOT_FOUND,
+ * BAD_REQUEST, CONFLICT, validation failures, ...) and must not be reported as
+ * an application failure.
+ */
 export const rpcHandler: RPCHandler<Record<never, never>> = new RPCHandler(
   router,
   {
@@ -9,8 +17,21 @@ export const rpcHandler: RPCHandler<Record<never, never>> = new RPCHandler(
         try {
           return await next();
         } catch (error) {
-          // Errors are masked towards the renderer; log the real cause here.
-          console.error("[ipc] RPC call failed.", error);
+          if (error instanceof ORPCError && error.status < 500) {
+            console.debug(
+              `[ipc] RPC returned ${error.code} (${error.status}).`
+            );
+          } else {
+            // Log name/code and message only; the full error (including
+            // `data`) may contain customer data.
+            const name = error instanceof Error ? error.name : typeof error;
+            const message =
+              error instanceof Error ? error.message : "Non-Error thrown";
+
+            console.error(`[ipc] RPC call failed. ${name}: ${message}`);
+          }
+
+          // Renderer semantics must stay unchanged.
           throw error;
         }
       },
