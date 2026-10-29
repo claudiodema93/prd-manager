@@ -1,3 +1,4 @@
+import path from "node:path";
 import { call } from "@orpc/server";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -27,7 +28,7 @@ const acme = {
   customerCode: "ACME-001",
   folderMtimeMs: 1_793_260_675_839,
   folderName: "Acme Srl",
-  folderPath: "/customers/acme",
+  folderPath: path.resolve("/customers/acme"),
   status: "ok" as const,
 };
 
@@ -45,7 +46,9 @@ beforeEach(() => {
     client: sqlite,
     schema,
   });
-  migrate(database, { migrationsFolder: "./drizzle" });
+  migrate(database, {
+    migrationsFolder: path.resolve(import.meta.dirname, "../../../drizzle"),
+  });
   state.db = database;
 });
 
@@ -61,7 +64,7 @@ describe("customers handlers", () => {
     expect(customer).toMatchObject({
       customerCode: "ACME-001",
       folderName: "Acme Srl",
-      folderPath: "/customers/acme",
+      folderPath: acme.folderPath,
       status: "ok",
     });
     expect(typeof created?.createdAt).toBe("number");
@@ -102,22 +105,29 @@ describe("customers handlers", () => {
   });
 
   it("preserves createdAt and bumps updatedAt on re-upsert", async () => {
-    const first = await call(upsertCustomer, acme);
+    vi.useFakeTimers({ toFake: ["Date"] });
 
-    // Let the wall clock advance so a bumped timestamp is observable.
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      const first = await call(upsertCustomer, acme);
 
-    const second = await call(upsertCustomer, {
-      ...acme,
-      customerCode: "ACME-002",
-    });
+      vi.setSystemTime(new Date("2026-01-01T00:00:05.000Z"));
+      const second = await call(upsertCustomer, {
+        ...acme,
+        customerCode: "ACME-002",
+      });
 
-    expect(typeof first?.createdAt).toBe("number");
-    expect(typeof second?.createdAt).toBe("number");
-    expect(typeof second?.updatedAt).toBe("number");
-    expect(second?.createdAt).toBe(first?.createdAt);
-    expect(second?.updatedAt).toBeGreaterThan(second?.createdAt ?? 0);
-    expect(second?.customerCode).toBe("ACME-002");
+      expect(typeof first?.createdAt).toBe("number");
+      expect(typeof second?.createdAt).toBe("number");
+      expect(typeof second?.updatedAt).toBe("number");
+      expect(second?.createdAt).toBe(first?.createdAt);
+      expect(second?.createdAt).toBe(Date.parse("2026-01-01T00:00:00.000Z"));
+      expect(second?.updatedAt).toBe(Date.parse("2026-01-01T00:00:05.000Z"));
+      expect(second?.updatedAt).toBeGreaterThan(second?.createdAt ?? 0);
+      expect(second?.customerCode).toBe("ACME-002");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps a single row when the same customer is upserted twice", async () => {
@@ -286,9 +296,9 @@ describe("customers handlers", () => {
     );
 
     expect(paths).toEqual([
-      "/customers/alpha",
-      "/customers/middle",
-      "/customers/zeta",
+      path.resolve("/customers/alpha"),
+      path.resolve("/customers/middle"),
+      path.resolve("/customers/zeta"),
     ]);
   });
 

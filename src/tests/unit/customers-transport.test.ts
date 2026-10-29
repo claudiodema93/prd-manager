@@ -1,3 +1,4 @@
+import path from "node:path";
 import { MessageChannel } from "node:worker_threads";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/message-port";
@@ -26,7 +27,7 @@ const customerInput = {
   customerCode: "TRANSPORT-001",
   folderMtimeMs: 1_793_260_675_839,
   folderName: "Transport Srl",
-  folderPath: "/customers/transport",
+  folderPath: path.resolve("/customers/transport"),
   metadataJson: { articles: 2 },
   status: "ok" as const,
 };
@@ -39,7 +40,9 @@ let serverPort: MessageChannel["port2"];
 beforeEach(() => {
   sqlite = new Database(":memory:");
   const database: TestDatabase = drizzle({ client: sqlite, schema });
-  migrate(database, { migrationsFolder: "./drizzle" });
+  migrate(database, {
+    migrationsFolder: path.resolve(import.meta.dirname, "../../../drizzle"),
+  });
   state.db = database;
 
   const channel = new MessageChannel();
