@@ -16,6 +16,7 @@ const config: ForgeConfig = {
   ],
   packagerConfig: {
     asar: true,
+    extraResource: ["./drizzle"],
   },
   plugins: [
     new VitePlugin({

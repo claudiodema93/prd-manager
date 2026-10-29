@@ -1,11 +1,12 @@
 import path from "node:path";
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, dialog } from "electron";
 import { ipcMain } from "electron/main";
 import {
   installExtension,
   REACT_DEVELOPER_TOOLS,
 } from "electron-devtools-installer";
 import { UpdateSourceType, updateElectronApp } from "update-electron-app";
+import { initDatabase } from "@/db";
 import { ipcContext } from "@/ipc/context";
 import { IPC_CHANNELS, inDevelopment } from "./constants";
 import { getBasePath } from "./utils/path";
@@ -57,6 +58,23 @@ function checkForUpdates() {
   });
 }
 
+function initializeDatabase(): boolean {
+  try {
+    initDatabase();
+
+    return true;
+  } catch (error) {
+    console.error("[db] Fatal: unable to initialise the database.", error);
+    dialog.showErrorBox(
+      "Database error",
+      "The local database could not be created, so the application will close."
+    );
+    app.quit();
+
+    return false;
+  }
+}
+
 async function setupORPC() {
   const { rpcHandler } = await import("./ipc/handler");
 
@@ -70,6 +88,10 @@ async function setupORPC() {
 
 app.whenReady().then(async () => {
   try {
+    if (!initializeDatabase()) {
+      return;
+    }
+
     createWindow();
     await installExtensions();
     checkForUpdates();
