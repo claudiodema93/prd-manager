@@ -1,12 +1,13 @@
-import type { z } from "zod";
-import type {
-  listCustomersInputSchema,
-  upsertCustomerInputSchema,
-} from "@/ipc/customers/schemas";
 import { ipc } from "@/ipc/manager";
+import type {
+  ListCustomersInput,
+  UpsertCustomerInput,
+} from "@/types/customers";
 
-export type ListCustomersInput = z.input<typeof listCustomersInputSchema>;
-export type UpsertCustomerInput = z.input<typeof upsertCustomerInputSchema>;
+export type {
+  ListCustomersInput,
+  UpsertCustomerInput,
+} from "@/types/customers";
 
 export function listCustomers(input: ListCustomersInput = {}) {
   return ipc.client.customers.listCustomers(input);

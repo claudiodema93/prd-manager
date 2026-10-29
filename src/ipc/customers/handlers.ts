@@ -3,10 +3,17 @@ import { and, count, eq, sql } from "drizzle-orm";
 import { getDatabase } from "@/db";
 import { customers } from "@/db/schema";
 import {
+  clearCustomersOutputSchema,
   customerFolderPathInputSchema,
+  getCustomerOutputSchema,
   listCustomersInputSchema,
+  listCustomersOutputSchema,
+  removeCustomerOutputSchema,
   upsertCustomerInputSchema,
+  upsertCustomerOutputSchema,
 } from "./schemas";
+
+type CustomersDatabase = ReturnType<typeof getDatabase>;
 
 // List responses only need summary columns; metadata is fetched on demand.
 const customerSummaryColumns = {
@@ -23,21 +30,42 @@ const customerSummaryColumns = {
   updatedAt: customers.updatedAt,
 };
 
+// SQLite's built-in `lower()` only folds ASCII, so non-ASCII names such as
+// "MÜLLER GmbH" could not be matched. This registers a Unicode-aware function
+// on each connection, and a WeakSet keeps the registration idempotent.
+const cacheLowerConnections = new WeakSet<object>();
+
+function registerCacheLower(db: CustomersDatabase): void {
+  const client = db.$client;
+
+  if (cacheLowerConnections.has(client)) {
+    return;
+  }
+
+  client.function("cache_lower", { deterministic: true }, (value) =>
+    typeof value === "string" ? value.toLocaleLowerCase() : value
+  );
+  cacheLowerConnections.add(client);
+}
+
 export const listCustomers = os
   .input(listCustomersInputSchema)
+  .output(listCustomersOutputSchema)
   .handler(({ input }) => {
     const db = getDatabase();
+    registerCacheLower(db);
+
     const searchPattern = input.search
-      ? `%${escapeLikePattern(input.search.toLowerCase())}%`
+      ? `%${escapeLikePattern(input.search.toLocaleLowerCase())}%`
       : undefined;
 
     const where = and(
       input.status ? eq(customers.status, input.status) : undefined,
       searchPattern
         ? sql`(
-            lower(${customers.customerCode}) LIKE ${searchPattern} ESCAPE '\\'
-            OR lower(${customers.folderName}) LIKE ${searchPattern} ESCAPE '\\'
-            OR lower(${customers.name}) LIKE ${searchPattern} ESCAPE '\\'
+            cache_lower(${customers.customerCode}) LIKE ${searchPattern} ESCAPE '\\'
+            OR cache_lower(${customers.folderName}) LIKE ${searchPattern} ESCAPE '\\'
+            OR cache_lower(${customers.name}) LIKE ${searchPattern} ESCAPE '\\'
           )`
         : undefined
     );
@@ -67,6 +95,7 @@ export const listCustomers = os
 // Lookups return `null` when the row does not exist; mutations throw NOT_FOUND.
 export const getCustomer = os
   .input(customerFolderPathInputSchema)
+  .output(getCustomerOutputSchema)
   .handler(({ input }) => {
     const db = getDatabase();
 
@@ -81,9 +110,10 @@ export const getCustomer = os
 
 export const upsertCustomer = os
   .input(upsertCustomerInputSchema)
+  .output(upsertCustomerOutputSchema)
   .handler(({ input }) => {
     const db = getDatabase();
-    const now = new Date();
+    const now = Date.now();
 
     // Insert needs every column, so omitted optional fields become NULL.
     const row = {
@@ -102,7 +132,7 @@ export const upsertCustomer = os
     };
 
     // Update uses patch semantics: an omitted optional field keeps its stored
-    // value, while an explicit `null` clears it.
+    // value, while an explicit `null` clears it. `createdAt` is never updated.
     const updates = {
       ...(input.articleSchemaVersion === undefined
         ? {}
@@ -136,6 +166,7 @@ export const upsertCustomer = os
 
 export const removeCustomer = os
   .input(customerFolderPathInputSchema)
+  .output(removeCustomerOutputSchema)
   .handler(({ input }) => {
     const db = getDatabase();
     const result = db
@@ -152,11 +183,13 @@ export const removeCustomer = os
     return input.folderPath;
   });
 
-export const clearCustomers = os.handler(() => {
-  const db = getDatabase();
+export const clearCustomers = os
+  .output(clearCustomersOutputSchema)
+  .handler(() => {
+    const db = getDatabase();
 
-  return db.delete(customers).run().changes;
-});
+    return db.delete(customers).run().changes;
+  });
 
 function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/gu, (match) => `\\${match}`);

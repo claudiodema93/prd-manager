@@ -6,9 +6,11 @@ export const customers = sqliteTable(
   "customers",
   {
     articleSchemaVersion: integer("article_schema_version"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .default(sql`0`),
+    // Epoch milliseconds. Kept as plain integers because the IPC transport is
+    // JSON, so Date instances would be silently downgraded to ISO strings.
+    // `sql\`0\`` matches the existing migration snapshots (a literal `0` would
+    // make drizzle-kit emit a no-op table rebuild).
+    createdAt: integer("created_at").notNull().default(sql`0`),
     customerCode: text("customer_code").notNull(),
     folderMtimeMs: integer("folder_mtime_ms").notNull(),
     folderName: text("folder_name").notNull(),
@@ -20,9 +22,7 @@ export const customers = sqliteTable(
     revisionSchemaVersion: integer("revision_schema_version"),
     schemaVersion: integer("schema_version"),
     status: text("status", { enum: CUSTOMER_STATUSES }).notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .notNull()
-      .default(sql`0`),
+    updatedAt: integer("updated_at").notNull().default(sql`0`),
   },
   (table) => [
     index("idx_customers_code_name").on(table.customerCode, table.folderName),
