@@ -1,25 +1,35 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
-import {
-  type BetterSQLite3Database,
-  drizzle,
-} from "drizzle-orm/better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { app } from "electron";
 import { customers } from "./schema";
 
 const schema = { customers };
 
-export type SaugerDatabase = BetterSQLite3Database<typeof schema>;
+export type SaugerDatabase = ReturnType<typeof drizzle<typeof schema>>;
 
 let database: SaugerDatabase | null = null;
 
 export function getDatabasePath(): string {
-  return (
-    process.env.SAUGER_DB_PATH ??
-    path.join(app.getPath("userData"), "sauger.db")
-  );
+  const override = process.env.SAUGER_DB_PATH?.trim();
+
+  if (!override) {
+    return path.join(app.getPath("userData"), "sauger.db");
+  }
+
+  if (override === ":memory:") {
+    return override;
+  }
+
+  const resolved = path.resolve(override);
+
+  if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
+    throw new Error(`SAUGER_DB_PATH points to a directory: "${resolved}".`);
+  }
+
+  return resolved;
 }
 
 export function getDatabase(): SaugerDatabase {
@@ -30,6 +40,15 @@ export function getDatabase(): SaugerDatabase {
   }
 
   return database;
+}
+
+export function closeDatabase(): void {
+  if (!database) {
+    return;
+  }
+
+  database.$client.close();
+  database = null;
 }
 
 /**
@@ -47,7 +66,10 @@ export function initDatabase(): SaugerDatabase {
   const migrationsFolder = getMigrationsFolder();
 
   assertMigrationsAvailable(migrationsFolder);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+
+  if (file !== ":memory:") {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+  }
 
   try {
     database = createDatabase(file, migrationsFolder);

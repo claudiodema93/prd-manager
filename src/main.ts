@@ -61,8 +61,9 @@ async function initializeDatabase(): Promise<boolean> {
   try {
     // Imported lazily so that a native-module load failure stays inside this
     // try/catch instead of crashing before the error dialog can be shown.
-    const { initDatabase } = await import("@/db");
+    const { closeDatabase, initDatabase } = await import("@/db");
     initDatabase();
+    app.once("will-quit", closeDatabase);
 
     return true;
   } catch (error) {

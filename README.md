@@ -81,6 +81,16 @@ Now you can go directly to `/src/routes/index.tsx` and modify the app as you wan
 
 > You can also delete the `/src/routes/second.tsx` file if you don't want a second page.
 
+## Database
+
+The app keeps a SQLite cache in the Electron `userData` directory (`sauger.db`), managed with Drizzle ORM and better-sqlite3 in the main process.
+
+- The database is a disposable cache. At startup it is recreated from scratch **only** when SQLite reports the file as corrupted (`SQLITE_CORRUPT`/`SQLITE_NOTADB`); any other failure is surfaced instead of destroying data.
+- Set `SAUGER_DB_PATH` to use a different file (absolute path, or `:memory:` in tests).
+- The schema lives in `src/db/schema.ts`. After changing it, run `npm run db:generate` and commit the generated `drizzle/` folder.
+- Migrations are applied automatically on startup and shipped in packaged builds through `extraResource`.
+- Database rows are exposed to the renderer only through oRPC procedures (`src/ipc/customers` → `src/actions/customers.ts`).
+
 ## Auto update
 
 > [!WARNING]

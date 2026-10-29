@@ -12,20 +12,30 @@ export const listCustomers = os
   .input(listCustomersInputSchema)
   .handler(({ input }) => {
     const db = getDatabase();
-    const conditions = [
-      input.status ? eq(customers.status, input.status) : undefined,
-      input.search
-        ? sql`instr(${customers.customerCode}, ${input.search}) > 0`
-        : undefined,
-    ].filter((condition) => condition !== undefined);
+    const searchPattern = input.search
+      ? `%${escapeLikePattern(input.search.toLowerCase())}%`
+      : undefined;
 
-    const where = conditions.length > 0 ? and(...conditions) : undefined;
+    const where = and(
+      input.status ? eq(customers.status, input.status) : undefined,
+      searchPattern
+        ? sql`(
+            lower(${customers.customerCode}) LIKE ${searchPattern} ESCAPE '\\'
+            OR lower(${customers.folderName}) LIKE ${searchPattern} ESCAPE '\\'
+            OR lower(${customers.name}) LIKE ${searchPattern} ESCAPE '\\'
+          )`
+        : undefined
+    );
 
     const items = db
       .select()
       .from(customers)
       .where(where)
-      .orderBy(customers.customerCode, customers.folderName)
+      .orderBy(
+        customers.customerCode,
+        customers.folderName,
+        customers.folderPath
+      )
       .limit(input.limit)
       .offset(input.offset)
       .all();
@@ -57,9 +67,12 @@ export const upsertCustomer = os
   .input(upsertCustomerInputSchema)
   .handler(({ input }) => {
     const db = getDatabase();
+    const now = new Date();
+
     // Insert needs every column, so omitted optional fields become NULL.
     const row = {
       articleSchemaVersion: input.articleSchemaVersion ?? null,
+      createdAt: now,
       customerCode: input.customerCode,
       folderMtimeMs: input.folderMtimeMs,
       folderName: input.folderName,
@@ -69,6 +82,7 @@ export const upsertCustomer = os
       revisionSchemaVersion: input.revisionSchemaVersion ?? null,
       schemaVersion: input.schemaVersion ?? null,
       status: input.status,
+      updatedAt: now,
     };
 
     // Update uses patch semantics: an omitted optional field keeps its stored
@@ -91,6 +105,7 @@ export const upsertCustomer = os
         ? {}
         : { schemaVersion: input.schemaVersion }),
       status: input.status,
+      updatedAt: now,
     };
 
     const [customer] = db
@@ -124,10 +139,10 @@ export const removeCustomer = os
 
 export const clearCustomers = os.handler(() => {
   const db = getDatabase();
-  const removed = db
-    .delete(customers)
-    .returning({ folderPath: customers.folderPath })
-    .all();
 
-  return removed.length;
+  return db.delete(customers).run().changes;
 });
+
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/gu, (match) => `\\${match}`);
+}
