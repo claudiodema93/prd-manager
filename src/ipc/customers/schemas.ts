@@ -11,7 +11,8 @@ export const customerStatusSchema = z.enum(CUSTOMER_STATUSES);
 
 const customerPathSchema = z
   .string()
-  .trim()
+  // Paths are filesystem data: do not trim, a leading/trailing space is part of
+  // the directory name on macOS and Linux.
   .min(1)
   .max(MAX_PATH_LENGTH)
   .refine((value) => !value.includes("\u0000"), {
