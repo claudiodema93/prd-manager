@@ -9,9 +9,15 @@ permissions:
 jobs:
   publish-release:
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout git repo
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # Do not leave a write-scoped token in .git/config while npm ci runs
+          # dependency lifecycle scripts. The publisher reads GITHUB_TOKEN from
+          # the step environment instead.
+          persist-credentials: false
 
       - name: Install Node and NPM
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6

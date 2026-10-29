@@ -29,11 +29,24 @@ export default defineConfig({
       reporter: ["text", "json", "html"],
       // Just below the level the suite actually reaches today (about 60%
       // statements/branches/lines and 42% functions), so a regression fails CI
-      // without making small refactors brittle.
+      // without making small refactors brittle. The critical modules must stay
+      // near-complete even if unrelated UI code drags the aggregate down.
       thresholds: {
         branches: 55,
         functions: 38,
         lines: 55,
+        "src/db/**": {
+          branches: 80,
+          functions: 90,
+          lines: 85,
+          statements: 85,
+        },
+        "src/ipc/customers/**": {
+          branches: 85,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         statements: 55,
       },
     },
