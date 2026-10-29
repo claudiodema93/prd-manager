@@ -83,11 +83,11 @@ Now you can go directly to `/src/routes/index.tsx` and modify the app as you wan
 
 ## Database
 
-The app keeps a SQLite cache in the Electron `userData` directory (`sauger.db`), managed with Drizzle ORM and better-sqlite3 in the main process.
+The app keeps a SQLite cache in the Electron `userData` directory (`cache.db`), managed with Drizzle ORM and better-sqlite3 in the main process.
 
 - The database is a disposable cache. At startup it is recreated from scratch **only** when SQLite reports the file as corrupted (`SQLITE_CORRUPT`/`SQLITE_NOTADB`); any other failure is surfaced instead of destroying data.
-- Set `SAUGER_DB_PATH` to use a different file (absolute path, or `:memory:` in tests).
-- The startup integrity check can be skipped for large caches with `SAUGER_SKIP_INTEGRITY_CHECK=1`.
+- Set `SAUGER_CACHE_DB_PATH` to use a different file (absolute path, or `:memory:` in tests).
+- The startup integrity check can be skipped for large caches with `SAUGER_CACHE_SKIP_INTEGRITY_CHECK=1`.
 - The schema lives in `src/db/schema.ts`. After changing it, run `npm run db:generate` and commit the generated `drizzle/` folder.
 - Migrations are applied automatically on startup and shipped in packaged builds through `extraResource`.
 - Database rows are exposed to the renderer only through oRPC procedures (`src/ipc/customers` → `src/actions/customers.ts`).
