@@ -1,15 +1,26 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { app, BrowserWindow, dialog } from "electron";
+import { app, BrowserWindow, dialog, nativeTheme, session } from "electron";
 import { ipcMain } from "electron/main";
-import {
-  installExtension,
-  REACT_DEVELOPER_TOOLS,
-} from "electron-devtools-installer";
+import started from "electron-squirrel-startup";
 import { UpdateSourceType, updateElectronApp } from "update-electron-app";
 import { ipcContext } from "@/ipc/context";
-import { IPC_CHANNELS, inDevelopment } from "./constants";
+import { IPC_CHANNELS } from "./constants";
 import { getBasePath } from "./utils/path";
+
+/**
+ * True only for an unpackaged (development) run.
+ *
+ * Do not use `NODE_ENV` here: Forge does not set it when starting the app, so
+ * it is false during `electron-forge start` and, in a packaged build, it can be
+ * spoofed by launching the binary with `NODE_ENV=development`.
+ */
+const isDevelopment = !app.isPackaged;
+
+/** Native background colour, used to avoid a white flash before first paint. */
+function getWindowBackgroundColor() {
+  return nativeTheme.shouldUseDarkColors ? "#1e1e1e" : "#ffffff";
+}
 
 function getRendererEntryPath() {
   return path.join(
@@ -39,26 +50,52 @@ function isAllowedNavigation(target: string): boolean {
   }
 }
 
+/**
+ * The renderer needs no privileged web APIs: camera, microphone, clipboard,
+ * geolocation, display capture, USB, HID, downloads, ... are all denied by
+ * default. Anything that later needs one must be granted explicitly here.
+ */
+function hardenSession() {
+  const { defaultSession } = session;
+
+  defaultSession.setPermissionRequestHandler(
+    (_webContents, _permission, callback) => {
+      callback(false);
+    }
+  );
+  defaultSession.setPermissionCheckHandler(() => false);
+  defaultSession.setDevicePermissionHandler(() => false);
+  defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+    callback({});
+  });
+  defaultSession.on("will-download", (event) => {
+    event.preventDefault();
+  });
+}
+
 function createWindow() {
   const basePath = getBasePath();
   const preload = path.join(basePath, "preload.cjs");
   const mainWindow = new BrowserWindow({
+    backgroundColor: getWindowBackgroundColor(),
     height: 600,
+    show: false,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
     trafficLightPosition:
       process.platform === "darwin" ? { x: 5, y: 5 } : undefined,
     webPreferences: {
       contextIsolation: true,
-      devTools: inDevelopment,
-      // The renderer bundle only uses browser APIs (Vite inlines
-      // `process.env.NODE_ENV` at build time), so it does not need Node.
+      devTools: isDevelopment,
       nodeIntegration: false,
       nodeIntegrationInSubFrames: false,
+      nodeIntegrationInWorker: false,
 
       preload,
+      safeDialogs: true,
       // The preload only uses `ipcRenderer` and DOM APIs to forward the
       // MessagePort, so it runs unchanged inside Electron's sandbox.
       sandbox: true,
+      webviewTag: false,
     },
     width: 800,
   });
@@ -66,6 +103,14 @@ function createWindow() {
   mainWindow.on("closed", () => {
     if (ipcContext.mainWindow === mainWindow) {
       ipcContext.mainWindow = undefined;
+    }
+  });
+
+  // The window starts hidden so it appears fully painted instead of flashing
+  // an empty frame.
+  mainWindow.once("ready-to-show", () => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.show();
     }
   });
 
@@ -77,12 +122,12 @@ function createWindow() {
   // Never let the app window navigate to a foreign origin or protocol. The
   // same rule applies to server redirects and to subframes (which may only stay
   // on about:blank).
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (isAllowedNavigation(url)) {
+  mainWindow.webContents.on("will-navigate", (details) => {
+    if (isAllowedNavigation(details.url)) {
       return;
     }
 
-    event.preventDefault();
+    details.preventDefault();
     console.warn("[security] Blocked a navigation away from the app.");
   });
 
@@ -117,6 +162,12 @@ function createWindow() {
 
 async function installExtensions() {
   try {
+    // Imported lazily: this pulls in a sizeable dependency tree that is only
+    // needed for development.
+    const { installExtension, REACT_DEVELOPER_TOOLS } = await import(
+      "electron-devtools-installer"
+    );
+
     const result = await installExtension(REACT_DEVELOPER_TOOLS);
     console.log(`Extensions installed successfully: ${result.name}`);
   } catch {
@@ -181,62 +232,88 @@ async function setupORPC() {
   });
 }
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
+/**
+ * Set once the oRPC listener is registered and the first window was created.
+ * Until then the normal startup path owns window creation; `second-instance`
+ * and `activate` must not race it (which would drop the MessagePort and/or
+ * open a duplicate window).
+ */
+let startupComplete = false;
 
-if (hasSingleInstanceLock) {
-  app.on("second-instance", () => {
-    const { mainWindow } = ipcContext;
+// Squirrel.Windows runs the app for install/update/uninstall events only.
+// `electron-squirrel-startup` performs the shortcut work and quits; the app
+// itself must not bootstrap in that case.
+if (started) {
+  app.quit();
+} else {
+  const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
-    // After the window was closed on macOS the reference is destroyed, and
-    // calling show()/focus() on it would throw. Recreate it instead.
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      createWindow();
-      return;
-    }
-
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
-    }
-
-    mainWindow.show();
-    mainWindow.focus();
-  });
-
-  app.whenReady().then(async () => {
-    try {
-      if (!(await initializeDatabase())) {
+  if (hasSingleInstanceLock) {
+    app.on("second-instance", () => {
+      if (!startupComplete) {
         return;
       }
 
-      // The renderer posts its MessagePort while evaluating its bundle, so the
-      // oRPC listener must be registered before the window is created.
-      await setupORPC();
-      createWindow();
-      checkForUpdates();
+      const { mainWindow } = ipcContext;
 
-      // DevTools extensions are fetched from the Chrome Web Store at runtime;
-      // never do that in a production build.
-      if (inDevelopment) {
-        await installExtensions();
+      // After the window was closed on macOS the reference is destroyed, and
+      // calling show()/focus() on it would throw. Recreate it instead.
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        createWindow();
+        return;
       }
-    } catch (error) {
-      console.error("Error during app initialization:", error);
-    }
-  });
-} else {
-  app.quit();
-}
 
-//osX only
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+
+      mainWindow.show();
+      mainWindow.focus();
+    });
+
+    app.whenReady().then(async () => {
+      try {
+        hardenSession();
+
+        if (!(await initializeDatabase())) {
+          return;
+        }
+
+        // The renderer posts its MessagePort while evaluating its bundle, so
+        // the oRPC listener must be registered before the window is created.
+        await setupORPC();
+        createWindow();
+        startupComplete = true;
+        checkForUpdates();
+
+        // DevTools extensions are fetched from the Chrome Web Store at runtime;
+        // never do that in a production build.
+        if (isDevelopment) {
+          await installExtensions();
+        }
+      } catch (error) {
+        console.error("Error during app initialization:", error);
+      }
+    });
+
+    //osX only
+    app.on("window-all-closed", () => {
+      if (process.platform !== "darwin") {
+        app.quit();
+      }
+    });
+
+    app.on("activate", () => {
+      if (!startupComplete) {
+        return;
+      }
+
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
+    //osX only ends
+  } else {
     app.quit();
   }
-});
-
-app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
-});
-//osX only ends
+}

@@ -1,5 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { call } from "@orpc/server";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { openExternalLink } from "@/ipc/shell/handlers";
 import { openExternalLinkInputSchema } from "@/ipc/shell/schemas";
+
+const { openExternal } = vi.hoisted(() => ({ openExternal: vi.fn() }));
+
+vi.mock("electron", () => ({
+  shell: { openExternal },
+}));
 
 describe("openExternalLinkInputSchema", () => {
   it.each(["https://example.com", "http://localhost:3000/path?x=1#y"])(
@@ -46,5 +54,33 @@ describe("openExternalLinkInputSchema", () => {
     if (!result.success) {
       expect(result.error.issues[0]?.message).toContain("javascript:");
     }
+  });
+});
+
+describe("openExternalLink handler", () => {
+  beforeEach(() => {
+    openExternal.mockReset();
+  });
+
+  it("opens the link and returns the URL", async () => {
+    openExternal.mockResolvedValue(undefined);
+
+    await expect(
+      call(openExternalLink, { url: "https://example.com" })
+    ).resolves.toBe("https://example.com");
+    expect(openExternal).toHaveBeenCalledTimes(1);
+    expect(openExternal).toHaveBeenCalledWith("https://example.com");
+  });
+
+  it("rejects with BAD_REQUEST when the OS cannot open the link", async () => {
+    openExternal.mockRejectedValue(new Error("no handler registered"));
+
+    await expect(
+      call(openExternalLink, { url: "https://example.com" })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "Unable to open the link.",
+    });
+    expect(openExternal).toHaveBeenCalledTimes(1);
   });
 });
