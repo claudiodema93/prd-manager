@@ -9,18 +9,19 @@ class IPCContext {
   }
 
   get mainWindowContext() {
-    const window = this.mainWindow;
-    if (!window) {
-      throw new Error("Main window is not set in IPC context.");
-    }
+    return os.middleware(({ next }) => {
+      const { mainWindow } = this;
 
-    return os.middleware(({ next }) =>
-      next({
+      if (!mainWindow) {
+        throw new Error("Main window is not set in IPC context.");
+      }
+
+      return next({
         context: {
-          window,
+          window: mainWindow,
         },
-      })
-    );
+      });
+    });
   }
 }
 
