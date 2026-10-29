@@ -15,7 +15,6 @@ Desktop application for managing product requirement documents, built with Elect
 - [oRPC](https://orpc.unnoq.com)
 - [Ultracite with Biome](https://www.ultracite.ai/providers/biome)
 - [Zod](https://zod.dev)
-- [React Query (TanStack)](https://tanstack.com/query)
 
 ### UI 🎨
 

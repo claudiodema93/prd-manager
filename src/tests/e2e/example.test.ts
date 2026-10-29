@@ -14,6 +14,8 @@ import {
 let electronApp: ElectronApplication;
 let tempDir: string;
 
+const EXTERNAL_NAVIGATION_PATTERN = /example\.com/u;
+
 test.beforeAll(async () => {
   const cache = createTempCacheDir();
   ({ tempDir } = cache);
@@ -80,8 +82,20 @@ test("blocks window.open and off-app navigation", async () => {
   await page.evaluate(() => {
     window.location.href = "https://example.com/";
   });
-  await page.waitForTimeout(300);
 
+  // Race the navigation against a short grace period: a blocked navigation
+  // never resolves waitForURL, so it must lose the race.
+  const navigated = await Promise.race([
+    page
+      .waitForURL(EXTERNAL_NAVIGATION_PATTERN, { timeout: 1000 })
+      .then(() => true)
+      .catch(() => false),
+    new Promise<boolean>((resolve) => {
+      setTimeout(() => resolve(false), 500);
+    }),
+  ]);
+
+  expect(navigated).toBe(false);
   expect(page.url()).toBe(before);
   expect(electronApp.windows()).toHaveLength(1);
 });

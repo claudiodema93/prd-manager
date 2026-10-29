@@ -6,6 +6,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   publish-release:
     runs-on: windows-latest
@@ -27,6 +31,19 @@ jobs:
 
       - name: Install and build
         run: npm ci
+
+      - name: Refuse to publish an E2E build
+        shell: bash
+        run: test -z "${SAUGER_E2E:-}"
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run check
+        run: npm run check
+
+      - name: Run unit tests
+        run: npm run test:unit
 
       - name: Publish Release
         env:

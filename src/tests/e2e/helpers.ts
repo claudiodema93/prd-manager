@@ -16,12 +16,94 @@ import { findLatestBuild, parseElectronApp } from "electron-playwright-helpers";
  * and no window is ever created.
  */
 
-function getProcessEnv(): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined
-    )
+const PRODUCT_NAME = "PrdManager";
+const PACKAGE_COMMAND = "SAUGER_E2E=1 npm run package";
+
+/**
+ * Environment variables the packaged app may inherit. Anything else in the
+ * host environment (tokens, NODE_OPTIONS, proxy credentials, CI markers) is
+ * deliberately dropped so a test run cannot leak secrets into the app or
+ * change its startup behaviour.
+ *
+ * HOME, APPDATA and XDG_CONFIG_HOME are always replaced with the per-test
+ * temporary directory, never forwarded.
+ */
+const ENV_ALLOWLIST = [
+  "PATH",
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "TMPDIR",
+  "LANG",
+  "LC_ALL",
+  "TZ",
+] as const;
+
+function getProcessEnv(homeDir: string): Record<string, string> {
+  const env: Record<string, string> = {};
+
+  for (const key of ENV_ALLOWLIST) {
+    const value = process.env[key];
+
+    if (value !== undefined) {
+      env[key] = value;
+    }
+  }
+
+  // Isolate Electron's userData (and therefore the single-instance lock) from
+  // the developer's real profile.
+  env.APPDATA = homeDir;
+  env.HOME = homeDir;
+  env.XDG_CONFIG_HOME = path.join(homeDir, ".config");
+
+  return env;
+}
+
+/**
+ * The directory `electron-forge package` writes on this host, e.g.
+ * `out/PrdManager-darwin-arm64`. Forge names the output directory from the
+ * package productName plus the target platform and architecture.
+ */
+function expectedBuildDirectory(): string {
+  return path.join(
+    process.cwd(),
+    "out",
+    `${PRODUCT_NAME}-${process.platform}-${process.arch}`
   );
+}
+
+function resolveBuildDirectory(): string {
+  const expected = expectedBuildDirectory();
+
+  if (fs.existsSync(expected)) {
+    return expected;
+  }
+
+  // Only used when the deterministically named directory is absent (for
+  // example an older forge layout). It is never preferred, because it can pick
+  // a stale build of a different product.
+  try {
+    return findLatestBuild();
+  } catch (error) {
+    throw new Error(
+      `No packaged app found at "${expected}". Run \`${PACKAGE_COMMAND}\` before the e2e suite.`,
+      { cause: error }
+    );
+  }
+}
+
+function resolveExecutable(): string {
+  const buildDirectory = resolveBuildDirectory();
+  const app = parseElectronApp(buildDirectory);
+
+  if (app.packageJson.productName !== PRODUCT_NAME) {
+    throw new Error(
+      `Refusing to launch "${buildDirectory}": expected package productName "${PRODUCT_NAME}", found "${String(
+        app.packageJson.productName
+      )}". Run \`${PACKAGE_COMMAND}\` to rebuild.`
+    );
+  }
+
+  return app.executable;
 }
 
 export function createTempCacheDir(): { dbPath: string; tempDir: string } {
@@ -34,19 +116,12 @@ export function launchPackagedApp(
   dbPath: string,
   homeDir: string
 ): Promise<ElectronApplication> {
-  const { executable } = parseElectronApp(findLatestBuild());
-
   return electron.launch({
     env: {
-      ...getProcessEnv(),
-      // Isolate Electron's userData (and therefore the single-instance lock)
-      // from the developer's real profile.
-      APPDATA: homeDir,
-      HOME: homeDir,
+      ...getProcessEnv(homeDir),
       SAUGER_CACHE_DB_PATH: dbPath,
-      XDG_CONFIG_HOME: path.join(homeDir, ".config"),
     },
-    executablePath: executable,
+    executablePath: resolveExecutable(),
   });
 }
 
