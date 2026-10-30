@@ -42,9 +42,12 @@ test.afterAll(async () => {
 test("renders the first page", async () => {
   const page: Page = await electronApp.firstWindow();
 
-  const title = await page.waitForSelector("h1");
-  const text = await title.textContent();
-  expect(text).toBe("PrdManager");
+  // The site header renders an <h1> with the page title before the route
+  // content mounts, so the first heading on the page is "Home Page". Target
+  // the route heading explicitly instead of the first h1 in DOM order.
+  await expect(page.getByRole("heading", { name: "PrdManager" })).toBeVisible({
+    timeout: 10_000,
+  });
 });
 
 test("exchanges data with the main process over the sandboxed IPC bridge", async () => {
