@@ -33,7 +33,12 @@ vi.mock("electron", () => ({
 type StoreModule = typeof import("@/preferences/store");
 
 const EXPECTED_DEFAULTS = {
-  language: "en",
+  folders: {
+    articlesDirectory: null,
+    issuesDirectory: null,
+    trashDirectory: null,
+  },
+  language: "it",
   theme: "system",
   window: { height: 600, isMaximized: false, width: 800 },
 };
@@ -79,7 +84,7 @@ describe("preferences store", () => {
     expect(store.getPreferences()).toEqual(EXPECTED_DEFAULTS);
 
     store.setThemePreference("dark");
-    store.setLanguagePreference("pt-BR");
+    store.setLanguagePreference("it");
 
     expect(store.getPreferences()).toEqual(EXPECTED_DEFAULTS);
   });
@@ -90,7 +95,7 @@ describe("preferences store", () => {
 
     expect(store.getPreferences()).toEqual(EXPECTED_DEFAULTS);
     expect(store.getThemePreference()).toBe("system");
-    expect(store.getLanguagePreference()).toBe("en");
+    expect(store.getLanguagePreference()).toBe("it");
     expect(fs.existsSync(preferencesFile())).toBe(true);
   });
 
@@ -111,7 +116,7 @@ describe("preferences store", () => {
     store.initializePreferences();
 
     store.setThemePreference("dark");
-    store.setLanguagePreference("pt-BR");
+    store.setLanguagePreference("it");
     store.setWindowState({
       height: 700,
       isMaximized: true,
@@ -121,7 +126,8 @@ describe("preferences store", () => {
     });
 
     expect(store.getPreferences()).toEqual({
-      language: "pt-BR",
+      folders: EXPECTED_DEFAULTS.folders,
+      language: "it",
       theme: "dark",
       window: { height: 700, isMaximized: true, width: 900, x: 20, y: 30 },
     });
@@ -130,9 +136,108 @@ describe("preferences store", () => {
     store.initializePreferences();
 
     expect(store.getPreferences()).toEqual({
-      language: "pt-BR",
+      folders: EXPECTED_DEFAULTS.folders,
+      language: "it",
       theme: "dark",
       window: { height: 700, isMaximized: true, width: 900, x: 20, y: 30 },
+    });
+  });
+
+  it("persists folder preferences across instances", async () => {
+    const store = await loadStore();
+    store.initializePreferences();
+
+    const articles = path.join(tempDir, "articles");
+    const trash = path.join(tempDir, "trash");
+
+    store.setFolderPreference("articlesDirectory", articles);
+    store.setFolderPreference("trashDirectory", trash);
+
+    expect(store.getFoldersPreference()).toEqual({
+      articlesDirectory: articles,
+      issuesDirectory: null,
+      trashDirectory: trash,
+    });
+
+    store.resetPreferencesForTests();
+    store.initializePreferences();
+
+    expect(store.getFoldersPreference()).toEqual({
+      articlesDirectory: articles,
+      issuesDirectory: null,
+      trashDirectory: trash,
+    });
+  });
+
+  it("refuses to persist an invalid folder path and keeps the previous value", async () => {
+    const store = await loadStore();
+    store.initializePreferences();
+
+    const articles = path.join(tempDir, "articles");
+    store.setFolderPreference("articlesDirectory", articles);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    store.setFolderPreference("articlesDirectory", "relative/articles");
+
+    expect(store.getFoldersPreference().articlesDirectory).toBe(articles);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("swallows a failed folder write and keeps the previous value", async () => {
+    const store = await loadStore();
+    store.initializePreferences();
+
+    const articles = path.join(tempDir, "articles");
+    store.setFolderPreference("articlesDirectory", articles);
+
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const set = vi.spyOn(Store.prototype, "set").mockImplementation(() => {
+      throw new Error("disk full");
+    });
+
+    expect(() =>
+      store.setFolderPreference(
+        "articlesDirectory",
+        path.join(tempDir, "other")
+      )
+    ).not.toThrow();
+    expect(store.getFoldersPreference().articlesDirectory).toBe(articles);
+    expect(error).toHaveBeenCalledTimes(1);
+
+    set.mockRestore();
+  });
+
+  it("ignores folder writes before initialisation", async () => {
+    const store = await loadStore();
+
+    store.setFolderPreference("articlesDirectory", "/tmp/articles");
+
+    expect(store.getFoldersPreference()).toEqual(EXPECTED_DEFAULTS.folders);
+  });
+
+  it("loads a legacy preferences file without discarding its values", async () => {
+    fs.mkdirSync(preferencesDir, { recursive: true });
+    // Written by a release that still shipped the "en" locale and had no
+    // folders key. Neither change may wipe the theme or window state.
+    fs.writeFileSync(
+      preferencesFile(),
+      JSON.stringify({
+        language: "en",
+        theme: "dark",
+        window: { height: 700, isMaximized: true, width: 900 },
+      })
+    );
+
+    const store = await loadStore();
+    store.initializePreferences();
+
+    expect(store.getPreferences()).toEqual({
+      folders: EXPECTED_DEFAULTS.folders,
+      language: "it",
+      theme: "dark",
+      window: { height: 700, isMaximized: true, width: 900 },
     });
   });
 

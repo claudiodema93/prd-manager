@@ -1,26 +1,18 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
+import { it } from "./resources/it";
 
+// To add a language, add `resources/<code>.ts` exporting the same keys as
+// `it.ts`, then register it in `resources` below and add it to `langs.ts`.
 i18n.use(initReactI18next).init({
-  fallbackLng: "en",
+  fallbackLng: "it",
+  interpolation: {
+    escapeValue: false,
+  },
+  lng: "it",
   resources: {
-    en: {
-      translation: {
-        appName: "PrdManager",
-        documentation: "Documentation",
-        madeBy: "Made by Claudio De Martino",
-        titleHomePage: "Home Page",
-        titleSecondPage: "Second Page",
-      },
-    },
-    "pt-BR": {
-      translation: {
-        appName: "PrdManager",
-        documentation: "Documentação",
-        madeBy: "Feito por Claudio De Martino",
-        titleHomePage: "Página Inicial",
-        titleSecondPage: "Segunda Página",
-      },
+    it: {
+      translation: it,
     },
   },
 });

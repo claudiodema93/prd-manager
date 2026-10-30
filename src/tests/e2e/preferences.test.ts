@@ -35,7 +35,7 @@ function readPreferences(userData: string): PreferencesFile | null {
  * Launches the packaged app and drives the real renderer, so the IPC
  * preferences namespace and electron-store are exercised end to end.
  */
-test("persists theme, language and window state", async () => {
+test("persists theme and window state", async () => {
   const { dbPath, tempDir } = createTempCacheDir();
   let app = await launchPackagedApp(dbPath, tempDir);
 
@@ -46,17 +46,13 @@ test("persists theme, language and window state", async () => {
 
     await expect.poll(() => readPreferences(preferencesDir)).not.toBeNull();
 
-    const languageButton = page.getByRole("radio", { name: "PT-BR" });
-    await expect(languageButton).toBeVisible();
-    await languageButton.click();
-
+    // With a single available locale the language toggle cannot persist a new
+    // value (clicking the active item is a no-op), so language persistence is
+    // covered by the unit and transport tests instead.
     const themeButton = page.getByRole("button", { name: "Toggle theme" });
     await expect(themeButton).toBeVisible();
     await themeButton.click();
 
-    await expect
-      .poll(() => readPreferences(preferencesDir)?.language)
-      .toBe("pt-BR");
     await expect
       .poll(() => readPreferences(preferencesDir)?.theme)
       .not.toBe("system");
@@ -89,11 +85,6 @@ test("persists theme, language and window state", async () => {
     app = await launchPackagedApp(dbPath, tempDir);
 
     const restoredPage = await app.firstWindow();
-
-    await expect(
-      restoredPage.getByRole("radio", { name: "PT-BR" })
-    ).toBeChecked();
-    await expect(restoredPage.locator("html")).toHaveAttribute("lang", "pt-BR");
 
     if (storedTheme === "dark") {
       await expect(restoredPage.locator("html")).toHaveClass(

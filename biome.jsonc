@@ -15,7 +15,8 @@
       "!**/graphify-out",
       "!**/*.d.ts",
       "!**/ui",
-      "!**/routerTree.gen.ts"
+      "!**/hooks/use-mobile.ts",
+      "!**/routeTree.gen.ts"
     ]
   },
   "javascript": {

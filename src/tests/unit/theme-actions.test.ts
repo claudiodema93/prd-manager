@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { setTheme, syncTheme, toggleTheme } from "@/actions/theme";
+import {
+  setTheme,
+  subscribeToTheme,
+  syncTheme,
+  toggleTheme,
+} from "@/actions/theme";
 
 const { getCurrentThemeMode, setThemeMode, toggleThemeMode } = vi.hoisted(
   () => ({
@@ -131,6 +136,24 @@ describe("setTheme", () => {
     emitSystemThemeChange(true);
 
     expect(hasDarkClass()).toBe(false);
+  });
+});
+
+describe("subscribeToTheme", () => {
+  it("notifies subscribers until they unsubscribe", async () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribeToTheme(listener);
+    setThemeMode.mockResolvedValue({ dark: true, source: "dark" });
+
+    await setTheme("dark");
+
+    expect(listener).toHaveBeenCalledWith({ dark: true, source: "dark" });
+
+    unsubscribe();
+    toggleThemeMode.mockResolvedValue({ dark: false, source: "light" });
+    await toggleTheme();
+
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 });
 

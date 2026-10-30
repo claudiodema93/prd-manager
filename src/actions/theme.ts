@@ -10,6 +10,8 @@ export interface ThemeState {
   source: ThemeSource;
 }
 
+export type ThemeStateListener = (state: ThemeState) => void;
+
 const DARK_SCHEME_QUERY = "(prefers-color-scheme: dark)";
 
 // Mirrors the mode persisted in electron-store so the system-preference
@@ -17,6 +19,20 @@ const DARK_SCHEME_QUERY = "(prefers-color-scheme: dark)";
 // explicit mode.
 let storedMode: ThemeMode | null = null;
 let darkSchemeQuery: MediaQueryList | null = null;
+const themeStateListeners = new Set<ThemeStateListener>();
+
+/**
+ * Notifies subscribers whenever the renderer changes the theme, so controls
+ * that are mounted in different places (the header toggle and the display
+ * settings page) always show the same source.
+ */
+export function subscribeToTheme(listener: ThemeStateListener): () => void {
+  themeStateListeners.add(listener);
+
+  return () => {
+    themeStateListeners.delete(listener);
+  };
+}
 
 export async function setTheme(newTheme: ThemeMode): Promise<ThemeState> {
   const state = await ipc.client.theme.setThemeMode({ mode: newTheme });
@@ -35,6 +51,14 @@ export async function toggleTheme(): Promise<ThemeState> {
   applyThemeState(state);
 
   return state;
+}
+
+/**
+ * Reads the theme configured in the main process without applying it; the
+ * display page only needs the current source to render its selector.
+ */
+export function getThemeState(): Promise<ThemeState> {
+  return ipc.client.theme.getCurrentThemeMode();
 }
 
 export async function syncTheme(): Promise<ThemeState> {
@@ -62,6 +86,7 @@ function rememberThemeMode(mode: ThemeMode) {
 
 function applyThemeState(state: ThemeState) {
   if (state.source !== "system") {
+    notifyThemeState(state);
     applyDarkClass(state.dark);
     return;
   }
@@ -69,7 +94,14 @@ function applyThemeState(state: ThemeState) {
   // In system mode the renderer follows the media query, which is the only
   // signal that changes live when the OS preference changes.
   const query = getDarkSchemeQuery();
+  notifyThemeState(state);
   applyDarkClass(query ? query.matches : state.dark);
+}
+
+function notifyThemeState(state: ThemeState) {
+  for (const listener of themeStateListeners) {
+    listener(state);
+  }
 }
 
 function getDarkSchemeQuery(): MediaQueryList | null {

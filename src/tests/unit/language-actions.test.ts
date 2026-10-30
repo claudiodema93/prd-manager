@@ -19,7 +19,7 @@ vi.mock("@/ipc/manager", () => ({
   },
 }));
 
-function createI18n(initialLanguage = "en") {
+function createI18n(initialLanguage = "it") {
   let language = initialLanguage;
 
   const changeLanguage = vi.fn((next: string) => {
@@ -44,7 +44,7 @@ function asI18n(fake: FakeI18n): I18n {
 beforeEach(() => {
   vi.clearAllMocks();
   document.documentElement.lang = "";
-  getPreferences.mockResolvedValue({ language: "en", theme: "system" });
+  getPreferences.mockResolvedValue({ language: "it", theme: "system" });
   setLanguage.mockImplementation(({ language }: { language: string }) =>
     Promise.resolve({ language, theme: "system" })
   );
@@ -52,30 +52,30 @@ beforeEach(() => {
 
 describe("setAppLanguage", () => {
   it("persists the language, changes i18n and updates document.lang", async () => {
-    const fake = createI18n("en");
+    const fake = createI18n("it");
 
-    await setAppLanguage("pt-BR", asI18n(fake));
+    await setAppLanguage("it", asI18n(fake));
 
-    expect(setLanguage).toHaveBeenCalledWith({ language: "pt-BR" });
-    expect(fake.changeLanguage).toHaveBeenCalledWith("pt-BR");
-    expect(document.documentElement.lang).toBe("pt-BR");
+    expect(setLanguage).toHaveBeenCalledWith({ language: "it" });
+    expect(fake.changeLanguage).toHaveBeenCalledWith("it");
+    expect(document.documentElement.lang).toBe("it");
   });
 
   it("ignores an empty value emitted by the toggle group", async () => {
-    document.documentElement.lang = "pt-BR";
-    const fake = createI18n("pt-BR");
+    document.documentElement.lang = "it";
+    const fake = createI18n("it");
 
     await setAppLanguage("", asI18n(fake));
 
     expect(setLanguage).not.toHaveBeenCalled();
     expect(fake.changeLanguage).not.toHaveBeenCalled();
-    expect(document.documentElement.lang).toBe("pt-BR");
+    expect(document.documentElement.lang).toBe("it");
   });
 
   it("ignores an unsupported language", async () => {
-    const fake = createI18n("en");
+    const fake = createI18n("it");
 
-    await setAppLanguage("fr", asI18n(fake));
+    await setAppLanguage("en", asI18n(fake));
 
     expect(setLanguage).not.toHaveBeenCalled();
     expect(fake.changeLanguage).not.toHaveBeenCalled();
@@ -84,14 +84,14 @@ describe("setAppLanguage", () => {
 
 describe("updateAppLanguage", () => {
   it("restores the stored language from the main process", async () => {
-    getPreferences.mockResolvedValue({ language: "pt-BR", theme: "system" });
-    const fake = createI18n("en");
+    getPreferences.mockResolvedValue({ language: "it", theme: "system" });
+    const fake = createI18n("");
 
     await updateAppLanguage(asI18n(fake));
 
     expect(getPreferences).toHaveBeenCalledTimes(1);
-    expect(fake.changeLanguage).toHaveBeenCalledWith("pt-BR");
-    expect(fake.language).toBe("pt-BR");
-    expect(document.documentElement.lang).toBe("pt-BR");
+    expect(fake.changeLanguage).toHaveBeenCalledWith("it");
+    expect(fake.language).toBe("it");
+    expect(document.documentElement.lang).toBe("it");
   });
 });

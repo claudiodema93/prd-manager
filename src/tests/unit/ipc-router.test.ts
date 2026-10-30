@@ -50,13 +50,30 @@ vi.mock("electron", () => ({
 }));
 
 const preferencesState = vi.hoisted(() => ({
-  language: "en" as "en" | "pt-BR",
+  folders: {
+    articlesDirectory: null as string | null,
+    issuesDirectory: null as string | null,
+    trashDirectory: null as string | null,
+  },
+  language: "it" as const,
+  setLanguage: vi.fn(),
   setTheme: vi.fn(),
 }));
 
 vi.mock("@/preferences/store", () => ({
+  getFoldersPreference: () => ({ ...preferencesState.folders }),
   getLanguagePreference: () => preferencesState.language,
-  setLanguagePreference: (language: "en" | "pt-BR") => {
+  setFolderPreference: (
+    key: "articlesDirectory" | "issuesDirectory" | "trashDirectory",
+    directory: string | null
+  ) => {
+    preferencesState.folders = {
+      ...preferencesState.folders,
+      [key]: directory,
+    };
+  },
+  setLanguagePreference: (language: "it") => {
+    preferencesState.setLanguage(language);
     preferencesState.language = language;
   },
   setThemePreference: preferencesState.setTheme,
@@ -87,7 +104,13 @@ beforeEach(() => {
     canceled: false,
     filePaths: ["/tmp/picked.txt"],
   });
-  preferencesState.language = "en";
+  preferencesState.folders = {
+    articlesDirectory: null,
+    issuesDirectory: null,
+    trashDirectory: null,
+  };
+  preferencesState.language = "it";
+  preferencesState.setLanguage.mockReset();
   preferencesState.setTheme.mockReset();
 
   sqlite = new Database(":memory:");
@@ -155,17 +178,106 @@ describe("production IPC router", () => {
 
   it("serves and persists preferences over the wire", async () => {
     await expect(client.preferences.getPreferences()).resolves.toEqual({
-      language: "en",
+      language: "it",
       theme: "system",
     });
 
     await expect(
-      client.preferences.setLanguage({ language: "pt-BR" })
-    ).resolves.toEqual({ language: "pt-BR", theme: "system" });
+      client.preferences.setLanguage({ language: "it" })
+    ).resolves.toEqual({ language: "it", theme: "system" });
 
     await expect(client.preferences.getPreferences()).resolves.toEqual({
-      language: "pt-BR",
+      language: "it",
       theme: "system",
+    });
+
+    // The stored value never changes with a single locale, so the call itself
+    // is what proves persistence.
+    expect(preferencesState.setLanguage).toHaveBeenCalledWith("it");
+
+    await expect(
+      client.preferences.setLanguage({ language: "en" } as never)
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(preferencesState.setLanguage).toHaveBeenCalledTimes(1);
+  });
+
+  it("serves and persists folders over the wire", async () => {
+    const emptyFolders = {
+      articlesDirectory: null,
+      issuesDirectory: null,
+      trashDirectory: null,
+    };
+
+    await expect(client.preferences.getFolders()).resolves.toEqual(
+      emptyFolders
+    );
+
+    await expect(
+      client.preferences.setFolder({
+        directory: "/tmp/articles",
+        key: "articlesDirectory",
+      })
+    ).resolves.toEqual({
+      ...emptyFolders,
+      articlesDirectory: "/tmp/articles",
+    });
+
+    await expect(client.preferences.getFolders()).resolves.toEqual({
+      ...emptyFolders,
+      articlesDirectory: "/tmp/articles",
+    });
+
+    // Clearing crosses the transport too.
+    await expect(
+      client.preferences.setFolder({
+        directory: null,
+        key: "articlesDirectory",
+      })
+    ).resolves.toEqual(emptyFolders);
+
+    await expect(client.preferences.getFolders()).resolves.toEqual(
+      emptyFolders
+    );
+
+    // Network shares are valid folder choices.
+    await expect(
+      client.preferences.setFolder({
+        directory: "//server/share",
+        key: "articlesDirectory",
+      })
+    ).resolves.toEqual({
+      ...emptyFolders,
+      articlesDirectory: "//server/share",
+    });
+
+    await Promise.all(
+      [
+        "relative/articles",
+        "",
+        "/tmp/artic\u0000les",
+        "//?/C:/dir",
+        "//./pipe/name",
+      ].map((directory) =>
+        expect(
+          client.preferences.setFolder({
+            directory,
+            key: "articlesDirectory",
+          })
+        ).rejects.toMatchObject({ code: "BAD_REQUEST" })
+      )
+    );
+
+    await expect(
+      client.preferences.setFolder({
+        directory: "/tmp/articles",
+        key: "downloadsDirectory",
+      } as never)
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+    // Rejected writes must not touch the stored value.
+    await expect(client.preferences.getFolders()).resolves.toEqual({
+      ...emptyFolders,
+      articlesDirectory: "//server/share",
     });
   });
 

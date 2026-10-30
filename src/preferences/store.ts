@@ -3,12 +3,18 @@ import path from "node:path";
 import { app } from "electron";
 import Store from "electron-store";
 import type { LanguageKey } from "@/localization/langs";
+import {
+  DEFAULT_FOLDER_PREFERENCES,
+  type FolderKey,
+  type FolderPreferences,
+} from "@/types/preferences";
 import type { ThemeSource } from "@/types/theme-mode";
 import {
   type AppPreferences,
   appPreferencesSchema,
   DEFAULT_APP_PREFERENCES,
   DEFAULT_WINDOW_STATE,
+  folderPreferencesSchema,
   PREFERENCES_JSON_SCHEMA,
   type WindowState,
   windowStateSchema,
@@ -169,6 +175,7 @@ export function initializePreferences(): void {
 function fallbackPreferences(): AppPreferences {
   return {
     ...DEFAULT_APP_PREFERENCES,
+    folders: { ...DEFAULT_FOLDER_PREFERENCES },
     window: { ...DEFAULT_WINDOW_STATE },
   };
 }
@@ -199,6 +206,10 @@ export function getLanguagePreference(): LanguageKey {
 
 export function getWindowState(): WindowState {
   return getPreferences().window;
+}
+
+export function getFoldersPreference(): FolderPreferences {
+  return { ...getPreferences().folders };
 }
 
 /**
@@ -235,6 +246,21 @@ export function setWindowState(window: WindowState): void {
   }
 
   writePreference((current) => current.set("window", parsed.data));
+}
+
+export function setFolderPreference(
+  key: FolderKey,
+  directory: string | null
+): void {
+  const folders = { ...getPreferences().folders, [key]: directory };
+  const parsed = folderPreferencesSchema.safeParse(folders);
+
+  if (!parsed.success) {
+    console.warn("[preferences] Refusing to persist an invalid folder path.");
+    return;
+  }
+
+  writePreference((current) => current.set("folders", parsed.data));
 }
 
 /** Test seam: drops the cached instance so the next init re-reads the file. */

@@ -1,10 +1,6 @@
 import type { i18n } from "i18next";
 import { ipc } from "@/ipc/manager";
-import { LANGUAGE_KEYS, type LanguageKey } from "@/localization/langs";
-
-function isLanguageKey(value: string): value is LanguageKey {
-  return (LANGUAGE_KEYS as readonly string[]).includes(value);
-}
+import { isLanguageKey } from "@/localization/langs";
 
 export async function setAppLanguage(lang: string, i18: i18n): Promise<void> {
   // Radix' ToggleGroup emits an empty string when the active item is clicked.
