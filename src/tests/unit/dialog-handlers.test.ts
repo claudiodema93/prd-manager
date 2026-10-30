@@ -80,12 +80,21 @@ describe("openFile", () => {
     });
   });
 
-  it("wraps a native dialog failure in INTERNAL_SERVER_ERROR", async () => {
+  it("logs and wraps a native dialog failure", async () => {
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
     state.showOpenDialog.mockRejectedValue(new Error("native failure"));
 
     await expect(call(openFile, {})).rejects.toMatchObject({
       code: "INTERNAL_SERVER_ERROR",
     });
+    expect(error).toHaveBeenCalledWith(
+      "[dialog] showOpenDialog failed.",
+      expect.any(Error)
+    );
+
+    error.mockRestore();
   });
 
   it("fails when no main window is set", async () => {
@@ -110,6 +119,23 @@ describe("openDirectory", () => {
       buttonLabel: undefined,
       defaultPath: undefined,
       properties: ["openDirectory", "multiSelections"],
+      title: "Pick a folder",
+    });
+  });
+
+  it("maps the common options for a directory dialog", async () => {
+    await call(openDirectory, {
+      buttonLabel: "Choose",
+      defaultPath: "/tmp",
+      multiple: true,
+      showHiddenFiles: true,
+      title: "Pick a folder",
+    });
+
+    expect(state.showOpenDialog).toHaveBeenCalledWith(window, {
+      buttonLabel: "Choose",
+      defaultPath: "/tmp",
+      properties: ["openDirectory", "multiSelections", "showHiddenFiles"],
       title: "Pick a folder",
     });
   });

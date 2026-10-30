@@ -119,8 +119,8 @@ but never import it from the renderer.
 - `src/preferences/schema.ts` holds the zod schemas used by the IPC layer and the JSON
   Schema electron-store validates against.
 - `src/preferences/store.ts` initialises after `app.whenReady()` and degrades to defaults
-  when the file cannot be read. `APP_PREFERENCES_DIR` overrides the directory (must be
-  absolute; used by e2e).
+  when the file cannot be read. It refuses symlinks, non-regular files and files over 64 KiB,
+  writes `0600`, and honours `APP_PREFERENCES_DIR` (absolute) only in development/E2E builds.
 - Theme is applied to `nativeTheme.themeSource` before the window is created and persisted
   by the theme handlers. Language is exposed through the `preferences` oRPC namespace.
   Window bounds are restored in `createWindow` and saved on a debounce from
@@ -130,9 +130,10 @@ but never import it from the renderer.
 
 `src/ipc/dialog/` wraps `dialog.showOpenDialog` in the main process, parented to the main window.
 `dialog.openFile` accepts `title`, `defaultPath`, `buttonLabel`, `filters`, `multiple` and
-`showHiddenFiles`; `dialog.openDirectory` accepts the same without `filters`. Filter extensions
-are normalised (`.png`/`*.png` → `png`), and the raw Electron `properties` array is not exposed.
-Both procedures return `{ canceled, filePaths }`. Native dialogs are not e2e-tested.
+`showHiddenFiles`; `dialog.openDirectory` accepts the same without `filters`. `defaultPath` must
+be absolute and non-UNC; filter extensions are normalised (`.png`/`*.png` → `png`), and the raw
+Electron `properties` array is not exposed. Both procedures return `{ canceled, filePaths }`.
+Native dialogs are not e2e-tested.
 
 ### Build and packaging
 
@@ -155,8 +156,9 @@ is in `index.html`.
 - Playwright: `src/tests/e2e`, `workers: 1` (the app holds a single-instance lock), launches the
   packaged executable via `electron-playwright-helpers`. `helpers.ts` allows only an env allowlist
   into the app and redirects `HOME`/`APPDATA`/`XDG_CONFIG_HOME` to a per-test temp dir; it also
-  points `APP_PREFERENCES_DIR` at that temp dir and forwards `XAUTHORITY` so Electron can
-  authenticate with `xvfb-run` on Linux CI.
+  points `APP_PREFERENCES_DIR` and `APP_USER_DATA_DIR` at that temp dir (macOS resolves `userData`
+  through the OS account, not `$HOME`, so this is what isolates the single-instance lock) and
+  forwards `XAUTHORITY` so Electron can authenticate with `xvfb-run` on Linux CI.
 - Workflows: `check.yaml` (`npm audit --omit=dev`, typecheck, `ultracite check`, `drizzle-kit
   check`, schema-drift check), `testing.yaml` (unit coverage; e2e under xvfb), `publish.yaml`
   (manual dispatch on a Windows runner, refuses `APP_E2E` builds, creates a **draft** GitHub
@@ -168,7 +170,7 @@ Theme is three-state (`light`/`dark`/`system`) owned by `nativeTheme` in the mai
 renderer mirrors the result onto `document.documentElement.classList` and, in `system` mode,
 follows `matchMedia` so OS changes apply live. Language resources are inline in
 `src/localization/i18n.ts` (en, pt-BR), the language list is `src/localization/langs.ts`, and both
-theme and language preferences persist in `localStorage` (keys in `src/constants`).
+theme and language preferences persist in electron-store (`src/preferences/`), not `localStorage`.
 
 ## Code style
 

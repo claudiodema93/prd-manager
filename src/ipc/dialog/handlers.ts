@@ -41,7 +41,10 @@ async function showOpenDialog(
     };
   } catch (error) {
     // Native dialog failures are unexpected. Keep the OS error out of the
-    // renderer and let the oRPC interceptor log the 5xx.
+    // renderer, but log it here: the oRPC interceptor only sees the wrapped
+    // ORPCError message.
+    console.error("[dialog] showOpenDialog failed.", error);
+
     throw new ORPCError("INTERNAL_SERVER_ERROR", {
       cause: error,
       message: "Unable to open the dialog.",

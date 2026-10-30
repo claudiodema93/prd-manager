@@ -199,5 +199,23 @@ describe("production IPC router", () => {
         properties: ["openFile", "multiSelections"],
       })
     );
+
+    await expect(
+      client.dialog.openDirectory({ multiple: true })
+    ).resolves.toEqual({
+      canceled: false,
+      filePaths: ["/tmp/picked.txt"],
+    });
+
+    expect(electronState.showOpenDialog).toHaveBeenCalledWith(
+      window,
+      expect.objectContaining({
+        properties: ["openDirectory", "multiSelections"],
+      })
+    );
+
+    await expect(
+      client.dialog.openFile({ properties: ["openFile"] } as never)
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 });

@@ -82,16 +82,17 @@ electron-store file (`preferences.json`). The renderer reaches language through
 the `preferences` namespace; theme still uses the `theme` namespace, whose
 handlers persist to the same store. electron-store is ESM-only and is bundled
 into the CJS main bundle — keep it in `dependencies` but do not externalise it,
-and never import it in the renderer. Tests can set `APP_PREFERENCES_DIR`
-(absolute) to isolate the file.
+and never import it in the renderer. The store refuses symlinks, non-regular
+files and files over 64 KiB, writes `0600`, and honours `APP_PREFERENCES_DIR`
+(absolute) only in development/E2E builds.
 
 **Dialogs.** `dialog.openFile` and `dialog.openDirectory` wrap
 `dialog.showOpenDialog` in the main process, parented to the main window.
 `openFile` accepts `title`, `defaultPath`, `buttonLabel`, `filters`, `multiple`
 and `showHiddenFiles`; `openDirectory` accepts the same without `filters`.
-Inputs are strict and bounded, and extensions are normalised (`.png`/`*.png` →
-`png`). The renderer calls `actions/dialog.ts`. Native dialogs are not covered
-by e2e tests.
+Inputs are strict and bounded; `defaultPath` must be absolute and non-UNC, and
+extensions are normalised (`.png`/`*.png` → `png`). The renderer calls
+`actions/dialog.ts`. Native dialogs are not covered by e2e tests.
 
 **Renderer.** React Compiler is on, so write plain components without reflexive
 `useMemo`/`useCallback`. UI strings via `t()`: add keys to both `en` and `pt-BR`
@@ -121,7 +122,9 @@ and owned by `nativeTheme` in main; the renderer mirrors `.dark` and follows
 7. E2E launches the packaged executable, never stock Electron:
    `test:e2e:build` runs `APP_E2E=1 electron-forge package` because the
    production fuse disables `--inspect`. Tests run `workers: 1` and the helper
-   forwards only an environment allowlist.
+   forwards only an environment allowlist. It also sets `APP_USER_DATA_DIR`:
+   on macOS `HOME` does not isolate `userData`, so without it the single-instance
+   lock collides with a running dev app.
 8. `components/ui/**` is shadcn output (excluded from lint/coverage).
    `npm run bump-ui` re-adds those components and overwrites local edits.
 9. The `@` -> `src` alias is duplicated in `tsconfig.json`, all three Vite

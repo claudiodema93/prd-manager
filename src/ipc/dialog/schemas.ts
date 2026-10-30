@@ -1,3 +1,4 @@
+import path from "node:path";
 import { z } from "zod";
 
 const MAX_TEXT_LENGTH = 256;
@@ -6,7 +7,6 @@ const MAX_FILTERS = 20;
 const MAX_FILTER_NAME_LENGTH = 64;
 const MAX_EXTENSIONS = 50;
 const MAX_EXTENSION_LENGTH = 16;
-const MAX_SELECTED_PATHS = 10_000;
 
 const EXTENSION_PATTERN = /^(?:\*|[A-Za-z0-9][A-Za-z0-9+_-]*)$/u;
 const WILDCARD_PREFIX_PATTERN = /^\*\./u;
@@ -29,6 +29,12 @@ const defaultPathSchema = z
   .max(MAX_PATH_LENGTH)
   .refine((value) => !value.includes("\u0000"), {
     message: "defaultPath must not contain NUL characters",
+  })
+  .refine((value) => path.isAbsolute(value), {
+    message: "defaultPath must be absolute",
+  })
+  .refine((value) => !value.startsWith("\\\\"), {
+    message: "UNC paths are not supported",
   });
 
 /**
@@ -81,7 +87,7 @@ const commonDialogOptions = {
 export const openFileDialogInputSchema = z
   .object({
     ...commonDialogOptions,
-    filters: z.array(fileFilterSchema).min(1).max(MAX_FILTERS).optional(),
+    filters: z.array(fileFilterSchema).max(MAX_FILTERS).optional(),
   })
   .strict();
 
@@ -94,6 +100,6 @@ export const openDirectoryDialogInputSchema = z
 export const openDialogOutputSchema = z
   .object({
     canceled: z.boolean(),
-    filePaths: z.array(z.string()).max(MAX_SELECTED_PATHS),
+    filePaths: z.array(z.string()),
   })
   .strict();

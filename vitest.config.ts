@@ -59,6 +59,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        "src/preferences/**": {
+          branches: 80,
+          functions: 85,
+          lines: 85,
+          statements: 85,
+        },
         statements: 55,
       },
     },

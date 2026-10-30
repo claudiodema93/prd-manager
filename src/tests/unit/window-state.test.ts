@@ -3,6 +3,7 @@ import { DEFAULT_WINDOW_STATE } from "@/preferences/schema";
 import {
   hasMinimumVisibleArea,
   resolveWindowState,
+  showRestoredWindow,
 } from "@/preferences/window-state";
 
 const primary = {
@@ -105,5 +106,81 @@ describe("resolveWindowState", () => {
       x: 0,
       y: 0,
     });
+  });
+
+  it("clamps an oversized window back inside the work area", () => {
+    const saved = {
+      height: 700,
+      isMaximized: false,
+      width: 5000,
+      x: 1000,
+      y: 100,
+    };
+
+    expect(resolveWindowState(saved, [primary], primary)).toEqual({
+      height: 700,
+      isMaximized: false,
+      width: 1920,
+      x: 0,
+      y: 100,
+    });
+  });
+
+  it("drops the position when only one coordinate is present", () => {
+    const saved = {
+      height: 700,
+      isMaximized: false,
+      width: 900,
+      x: 100,
+    };
+
+    expect(resolveWindowState(saved, [primary], primary)).toEqual({
+      height: 700,
+      isMaximized: false,
+      width: 900,
+    });
+  });
+});
+
+describe("showRestoredWindow", () => {
+  function makeWindow(destroyed = false) {
+    const calls: string[] = [];
+
+    return {
+      calls,
+      window: {
+        isDestroyed: () => destroyed,
+        maximize: () => {
+          calls.push("maximize");
+        },
+        show: () => {
+          calls.push("show");
+        },
+      },
+    };
+  }
+
+  it("maximizes after the first paint, then shows", () => {
+    const { calls, window } = makeWindow();
+
+    showRestoredWindow(window, true);
+
+    expect(calls).toEqual(["maximize", "show"]);
+  });
+
+  it("only shows when the window was not maximized", () => {
+    const { calls, window } = makeWindow();
+
+    showRestoredWindow(window, false);
+
+    expect(calls).toEqual(["show"]);
+  });
+
+  it("does nothing for a destroyed window", () => {
+    const { calls, window } = makeWindow(true);
+
+    showRestoredWindow(window, true);
+
+    expect(calls).toEqual([]);
   });
 });

@@ -7,6 +7,17 @@ import { syncTheme } from "./actions/theme";
 import { router } from "./utils/routes";
 import "./localization/i18n";
 
+// Apply the effective scheme before React mounts. The main process sets
+// `nativeTheme.themeSource` from the stored preference before creating the
+// window, so `prefers-color-scheme` already reflects an explicit mode and the
+// first paint is not briefly light.
+if (typeof window.matchMedia === "function") {
+  document.documentElement.classList.toggle(
+    "dark",
+    window.matchMedia("(prefers-color-scheme: dark)").matches
+  );
+}
+
 export default function App() {
   const { i18n } = useTranslation();
 

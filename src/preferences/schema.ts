@@ -35,33 +35,31 @@ export const DEFAULT_APP_PREFERENCES: AppPreferences = {
   window: DEFAULT_WINDOW_STATE,
 };
 
-export const windowStateSchema = z
-  .object({
-    height: z.number().int().min(WINDOW_MIN_HEIGHT).max(MAX_WINDOW_DIMENSION),
-    isMaximized: z.boolean(),
-    width: z.number().int().min(WINDOW_MIN_WIDTH).max(MAX_WINDOW_DIMENSION),
-    x: z
-      .number()
-      .int()
-      .min(-MAX_WINDOW_COORDINATE)
-      .max(MAX_WINDOW_COORDINATE)
-      .optional(),
-    y: z
-      .number()
-      .int()
-      .min(-MAX_WINDOW_COORDINATE)
-      .max(MAX_WINDOW_COORDINATE)
-      .optional(),
-  })
-  .strict();
+// Unknown keys are stripped rather than rejected: a preference added by a
+// newer version must not discard every known value on a downgrade.
+export const windowStateSchema = z.object({
+  height: z.number().int().min(WINDOW_MIN_HEIGHT).max(MAX_WINDOW_DIMENSION),
+  isMaximized: z.boolean(),
+  width: z.number().int().min(WINDOW_MIN_WIDTH).max(MAX_WINDOW_DIMENSION),
+  x: z
+    .number()
+    .int()
+    .min(-MAX_WINDOW_COORDINATE)
+    .max(MAX_WINDOW_COORDINATE)
+    .optional(),
+  y: z
+    .number()
+    .int()
+    .min(-MAX_WINDOW_COORDINATE)
+    .max(MAX_WINDOW_COORDINATE)
+    .optional(),
+});
 
-export const appPreferencesSchema = z
-  .object({
-    language: z.enum(LANGUAGE_KEYS),
-    theme: z.enum(THEME_SOURCES),
-    window: windowStateSchema,
-  })
-  .strict();
+export const appPreferencesSchema = z.object({
+  language: z.enum(LANGUAGE_KEYS),
+  theme: z.enum(THEME_SOURCES),
+  window: windowStateSchema,
+});
 
 /**
  * JSON Schema used by electron-store/conf to validate the file on read and
@@ -81,7 +79,6 @@ export const PREFERENCES_JSON_SCHEMA: Schema<AppPreferences> = {
     type: "string",
   },
   window: {
-    additionalProperties: false,
     default: DEFAULT_WINDOW_STATE,
     properties: {
       height: {

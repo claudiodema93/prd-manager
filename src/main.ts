@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -19,9 +20,35 @@ import {
   initializePreferences,
   setWindowState,
 } from "@/preferences/store";
-import { resolveWindowState } from "@/preferences/window-state";
+import {
+  resolveWindowState,
+  showRestoredWindow,
+} from "@/preferences/window-state";
 import { IPC_CHANNELS } from "./constants";
 import { getBasePath } from "./utils/path";
+
+/**
+ * macOS resolves `userData` through the OS account, not `$HOME`, so the e2e
+ * helper cannot isolate the single-instance lock with environment variables.
+ * The E2E build may point `userData` at its own temp directory instead.
+ */
+function configureE2EUserData(): void {
+  if (process.env.APP_E2E !== "1") {
+    return;
+  }
+
+  const directory = process.env.APP_USER_DATA_DIR?.trim();
+
+  if (!directory) {
+    return;
+  }
+
+  const resolved = path.resolve(directory);
+  fs.mkdirSync(resolved, { recursive: true });
+  app.setPath("userData", resolved);
+}
+
+configureE2EUserData();
 
 /**
  * True only for an unpackaged (development) run.
@@ -108,11 +135,11 @@ function persistWindowState(window: BrowserWindow) {
   const bounds = window.getNormalBounds();
 
   setWindowState({
-    height: bounds.height,
+    height: Math.round(bounds.height),
     isMaximized: window.isMaximized(),
-    width: bounds.width,
-    x: bounds.x,
-    y: bounds.y,
+    width: Math.round(bounds.width),
+    x: Math.round(bounds.x),
+    y: Math.round(bounds.y),
   });
 }
 
@@ -182,18 +209,7 @@ function createWindow() {
   // The window starts hidden so it appears fully painted instead of flashing
   // an empty frame.
   mainWindow.once("ready-to-show", () => {
-    if (mainWindow.isDestroyed()) {
-      return;
-    }
-
-    // `maximize()` also shows the window, so restoring a maximized state must
-    // wait for the first paint; doing it before `ready-to-show` would bypass
-    // the `show: false` guard.
-    if (savedWindow.isMaximized) {
-      mainWindow.maximize();
-    }
-
-    mainWindow.show();
+    showRestoredWindow(mainWindow, savedWindow.isMaximized);
   });
 
   // Never let the renderer spawn additional windows (`window.open`,

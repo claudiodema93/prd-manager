@@ -41,15 +41,21 @@ describe("openFileDialogInputSchema", () => {
     const parsed = openFileDialogInputSchema.parse({
       filters: [
         {
-          extensions: [".png", "*.jpg", "*"],
+          extensions: [".png", "*.jpg", "*", "*.*"],
           name: "Files",
         },
       ],
     });
 
     expect(parsed.filters).toEqual([
-      { extensions: ["png", "jpg", "*"], name: "Files" },
+      { extensions: ["png", "jpg", "*", "*"], name: "Files" },
     ]);
+  });
+
+  it("accepts an empty filter list as no filter", () => {
+    expect(openFileDialogInputSchema.parse({ filters: [] }).filters).toEqual(
+      []
+    );
   });
 
   it("rejects extensions that are not bare extensions", () => {
@@ -97,21 +103,94 @@ describe("openFileDialogInputSchema", () => {
     ).toBe(false);
   });
 
-  it("rejects a NUL character in defaultPath", () => {
+  it("rejects a NUL character in text and paths", () => {
     expect(
       openFileDialogInputSchema.safeParse({ defaultPath: "/tmp/\u0000" })
         .success
     ).toBe(false);
+    expect(
+      openFileDialogInputSchema.safeParse({ title: "a\u0000b" }).success
+    ).toBe(false);
+    expect(
+      openFileDialogInputSchema.safeParse({ buttonLabel: "a\u0000b" }).success
+    ).toBe(false);
+    expect(
+      openFileDialogInputSchema.safeParse({
+        filters: [{ extensions: ["png"], name: "a\u0000b" }],
+      }).success
+    ).toBe(false);
   });
 
-  it("rejects text longer than the limit", () => {
+  it("requires an absolute, non-UNC defaultPath", () => {
+    expect(
+      openFileDialogInputSchema.safeParse({ defaultPath: "relative/dir" })
+        .success
+    ).toBe(false);
+    expect(
+      openFileDialogInputSchema.safeParse({ defaultPath: "\\\\server\\share" })
+        .success
+    ).toBe(false);
+    expect(
+      openFileDialogInputSchema.safeParse({ defaultPath: "/tmp/dir" }).success
+    ).toBe(true);
+  });
+
+  it("enforces text and filter limits at the boundary", () => {
+    expect(
+      openFileDialogInputSchema.safeParse({ title: "x".repeat(256) }).success
+    ).toBe(true);
     expect(
       openFileDialogInputSchema.safeParse({ title: "x".repeat(257) }).success
+    ).toBe(false);
+    expect(
+      openFileDialogInputSchema.safeParse({
+        filters: [{ extensions: ["x".repeat(16)], name: "x".repeat(64) }],
+      }).success
+    ).toBe(true);
+    expect(
+      openFileDialogInputSchema.safeParse({
+        filters: [{ extensions: ["x".repeat(17)], name: "Files" }],
+      }).success
+    ).toBe(false);
+    expect(
+      openFileDialogInputSchema.safeParse({
+        filters: [{ extensions: ["png"], name: "x".repeat(65) }],
+      }).success
+    ).toBe(false);
+  });
+
+  it("accepts defaultPath at the maximum length", () => {
+    const maximum = `/${"a".repeat(4095)}`;
+    const tooLong = `/${"a".repeat(4096)}`;
+
+    expect(
+      openFileDialogInputSchema.safeParse({ defaultPath: maximum }).success
+    ).toBe(true);
+    expect(
+      openFileDialogInputSchema.safeParse({ defaultPath: tooLong }).success
+    ).toBe(false);
+  });
+
+  it("rejects whitespace-only text and extra filter keys", () => {
+    expect(openFileDialogInputSchema.safeParse({ title: "   " }).success).toBe(
+      false
+    );
+    expect(
+      openFileDialogInputSchema.safeParse({
+        filters: [{ extensions: ["png"], icon: "x", name: "Images" }],
+      }).success
     ).toBe(false);
   });
 });
 
 describe("openDirectoryDialogInputSchema", () => {
+  it("applies the boolean defaults", () => {
+    expect(openDirectoryDialogInputSchema.parse({})).toEqual({
+      multiple: false,
+      showHiddenFiles: false,
+    });
+  });
+
   it("accepts the common options", () => {
     expect(
       openDirectoryDialogInputSchema.parse({

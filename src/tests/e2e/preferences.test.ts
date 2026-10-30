@@ -75,6 +75,13 @@ test("persists theme, language and window state", async () => {
 
     expect(storedTheme).not.toBe("system");
 
+    // Change the bounds and close before the 250 ms debounce fires: the close
+    // handler must flush the pending state.
+    await app.evaluate(({ BrowserWindow }) => {
+      const [window] = BrowserWindow.getAllWindows();
+      window?.setBounds({ height: 650, width: 850 });
+    });
+
     // Relaunch against the same temp dir: this exercises the restore path in
     // main (stored theme applied before the window, bounds restored) and the
     // renderer sync, not just the write path.
@@ -104,7 +111,7 @@ test("persists theme, language and window state", async () => {
       return window?.getBounds();
     });
 
-    expect(restoredBounds).toMatchObject({ height: 700, width: 900 });
+    expect(restoredBounds).toMatchObject({ height: 650, width: 850 });
   } finally {
     await app.close().catch(() => undefined);
     removeTempDir(tempDir);

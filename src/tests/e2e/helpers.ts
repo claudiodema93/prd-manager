@@ -126,8 +126,10 @@ export function launchPackagedApp(
     env: {
       ...getProcessEnv(homeDir),
       APP_CACHE_DB_PATH: dbPath,
-      // Keep preferences out of the developer's real userData directory.
+      // The packaged app honours these only in its E2E build.
+      APP_E2E: "1",
       APP_PREFERENCES_DIR: path.join(homeDir, "preferences"),
+      APP_USER_DATA_DIR: path.join(homeDir, "userData"),
     },
     executablePath: resolveExecutable(),
   });

@@ -80,21 +80,60 @@ export function resolveWindowState(
   return clampToWorkArea(candidate, display.workArea, true);
 }
 
+export interface WindowLifecycle {
+  isDestroyed: () => boolean;
+  maximize: () => void;
+  show: () => void;
+}
+
+/**
+ * Restores the maximized state after the first paint. `maximize()` also shows
+ * the window, so calling it before `ready-to-show` would bypass the
+ * `show: false` guard.
+ */
+export function showRestoredWindow(
+  window: WindowLifecycle,
+  isMaximized: boolean
+): void {
+  if (window.isDestroyed()) {
+    return;
+  }
+
+  if (isMaximized) {
+    window.maximize();
+  }
+
+  window.show();
+}
+
 function clampToWorkArea(
   state: WindowState,
   workArea: Rectangle,
   keepPosition: boolean
 ): WindowState {
-  const hasPosition =
-    keepPosition && state.x !== undefined && state.y !== undefined;
+  const width = Math.max(
+    WINDOW_MIN_WIDTH,
+    Math.min(state.width, workArea.width)
+  );
+  const height = Math.max(
+    WINDOW_MIN_HEIGHT,
+    Math.min(state.height, workArea.height)
+  );
+
+  if (!keepPosition || state.x === undefined || state.y === undefined) {
+    return { height, isMaximized: state.isMaximized, width };
+  }
+
+  // Keep the whole window inside the chosen work area, including when the
+  // saved size was larger than the display and had to be capped.
+  const maxX = workArea.x + workArea.width - width;
+  const maxY = workArea.y + workArea.height - height;
 
   return {
-    height: Math.max(
-      WINDOW_MIN_HEIGHT,
-      Math.min(state.height, workArea.height)
-    ),
+    height,
     isMaximized: state.isMaximized,
-    width: Math.max(WINDOW_MIN_WIDTH, Math.min(state.width, workArea.width)),
-    ...(hasPosition ? { x: state.x, y: state.y } : {}),
+    width,
+    x: Math.min(Math.max(state.x, workArea.x), maxX),
+    y: Math.min(Math.max(state.y, workArea.y), maxY),
   };
 }

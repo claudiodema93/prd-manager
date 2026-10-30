@@ -1,4 +1,6 @@
+import fs from "node:fs";
 import path from "node:path";
+import { app } from "electron";
 import Store from "electron-store";
 import type { LanguageKey } from "@/localization/langs";
 import type { ThemeSource } from "@/types/theme-mode";
@@ -13,12 +15,107 @@ import {
 } from "./schema";
 
 const STORE_NAME = "preferences";
+const STORE_FILE = `${STORE_NAME}.json`;
 const PREFERENCES_DIR_ENV = "APP_PREFERENCES_DIR";
+const E2E_ENV = "APP_E2E";
+const MAX_PREFERENCES_BYTES = 64 * 1024;
 
 type PreferencesStore = Store<AppPreferences>;
 
 let store: PreferencesStore | null = null;
 let initializationFailed = false;
+
+/**
+ * In a packaged build the directory override is honoured only by the E2E
+ * build, so a stray environment variable cannot redirect production data.
+ * The e2e helper passes `APP_E2E=1` to the packaged app.
+ */
+function getOverrideDirectory(): string | undefined {
+  if (app.isPackaged && process.env[E2E_ENV] !== "1") {
+    return undefined;
+  }
+
+  const override = process.env[PREFERENCES_DIR_ENV]?.trim();
+
+  if (!override) {
+    return undefined;
+  }
+
+  if (!path.isAbsolute(override)) {
+    throw new Error(
+      `${PREFERENCES_DIR_ENV} must be an absolute path (received "${override}").`
+    );
+  }
+
+  return path.resolve(override);
+}
+
+/**
+ * Mirrors the cache DB's refusal rules: the store never writes through a
+ * symlink and never opens a directory or a non-regular file.
+ */
+function assertSafeDirectory(directory: string): void {
+  const stats = fs.lstatSync(directory, { throwIfNoEntry: false });
+
+  if (stats?.isSymbolicLink()) {
+    throw new Error(
+      `Refusing to use "${directory}": it is a symbolic link. The path was not modified.`
+    );
+  }
+
+  if (stats && !stats.isDirectory()) {
+    throw new Error(
+      `Refusing to use "${directory}": it is not a directory. The path was not modified.`
+    );
+  }
+
+  if (!stats) {
+    fs.mkdirSync(directory, { mode: 0o700, recursive: true });
+  }
+}
+
+function assertSafeFile(file: string): void {
+  const stats = fs.lstatSync(file, { throwIfNoEntry: false });
+
+  if (!stats) {
+    return;
+  }
+
+  if (stats.isSymbolicLink()) {
+    throw new Error(
+      `Refusing to use "${file}": it is a symbolic link. The path was not modified.`
+    );
+  }
+
+  if (!stats.isFile()) {
+    throw new Error(
+      `Refusing to use "${file}": it is not a regular file. The path was not modified.`
+    );
+  }
+
+  if (stats.size > MAX_PREFERENCES_BYTES) {
+    throw new Error(
+      `Refusing to use "${file}": it is larger than ${MAX_PREFERENCES_BYTES / 1024} KiB.`
+    );
+  }
+}
+
+function restrictFilePermissions(file: string): void {
+  if (process.platform === "win32") {
+    return;
+  }
+
+  try {
+    fs.chmodSync(file, 0o600);
+  } catch (error) {
+    // The file may not exist until the first write.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn(
+        `[preferences] Could not restrict permissions on "${file}".`
+      );
+    }
+  }
+}
 
 /**
  * Preferences only: electron-store rewrites the whole JSON file on every
@@ -27,26 +124,25 @@ let initializationFailed = false;
  * Source: https://github.com/sindresorhus/electron-store#faq
  */
 function createStore(): PreferencesStore {
-  const override = process.env[PREFERENCES_DIR_ENV]?.trim();
-  let cwd: string | undefined;
+  const override = getOverrideDirectory();
+  const cwd = override ?? app.getPath("userData");
+  const file = path.join(cwd, STORE_FILE);
 
-  if (override) {
-    if (!path.isAbsolute(override)) {
-      throw new Error(
-        `${PREFERENCES_DIR_ENV} must be an absolute path (received "${override}").`
-      );
-    }
+  assertSafeDirectory(cwd);
+  assertSafeFile(file);
 
-    cwd = path.resolve(override);
-  }
-
-  return new Store<AppPreferences>({
+  const current = new Store<AppPreferences>({
     clearInvalidConfig: true,
+    configFileMode: 0o600,
+    cwd,
     defaults: DEFAULT_APP_PREFERENCES,
     name: STORE_NAME,
     schema: PREFERENCES_JSON_SCHEMA,
-    ...(cwd ? { cwd } : {}),
   });
+
+  restrictFilePermissions(file);
+
+  return current;
 }
 
 /**
