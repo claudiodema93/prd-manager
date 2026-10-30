@@ -16,7 +16,7 @@
       "!**/*.d.ts",
       "!**/ui",
       "!**/hooks/use-mobile.ts",
-      "!**/routerTree.gen.ts"
+      "!**/routeTree.gen.ts"
     ]
   },
   "javascript": {
