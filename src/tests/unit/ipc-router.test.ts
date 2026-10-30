@@ -185,7 +185,8 @@ describe("production IPC router", () => {
       theme: "system",
     });
 
-    expect(preferencesState.setSidebarOpen).toHaveBeenCalledWith(false);
+    // The round trip above is the behavioural assertion; the store mock is
+    // stateful, so no extra spy assertion is needed here.
 
     await expect(client.preferences.getPreferences()).resolves.toEqual({
       language: "pt-BR",

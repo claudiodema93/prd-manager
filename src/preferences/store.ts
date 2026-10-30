@@ -231,6 +231,15 @@ export function setLanguagePreference(language: LanguageKey): void {
 }
 
 export function setSidebarOpenPreference(open: boolean): void {
+  // Mirrors setWindowState: validate at the store boundary as well, so a
+  // future non-IPC caller cannot write an unvalidated value.
+  if (typeof open !== "boolean") {
+    console.warn(
+      "[preferences] Refusing to persist a non-boolean sidebar state."
+    );
+    return;
+  }
+
   writePreference((current) => current.set("sidebarOpen", open));
 }
 

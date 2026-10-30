@@ -34,7 +34,8 @@ export default function AppSidebar({
       // shadcn positions the desktop sidebar with `fixed inset-y-0 h-svh`,
       // which would cover the frameless window's drag strip. Anchoring it to
       // the (relative) SidebarProvider instead keeps it below the title bar.
-      className={cn("absolute inset-y-0 h-full", className)}
+      // The override is applied last so a caller's className cannot undo it.
+      className={cn(className, "absolute inset-y-0 h-full")}
       collapsible="icon"
       variant="inset"
       {...props}

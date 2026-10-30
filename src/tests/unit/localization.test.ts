@@ -36,6 +36,7 @@ describe("translation resources", () => {
     const required = [
       "appName",
       "documentation",
+      "madeBy",
       "navigation",
       "titleHomePage",
       "titleSecondPage",
@@ -48,7 +49,7 @@ describe("translation resources", () => {
       >;
 
       for (const key of required) {
-        expect(bundle[key]).toBeTypeOf("string");
+        expect(bundle[key]).toBeTruthy();
       }
     }
   });

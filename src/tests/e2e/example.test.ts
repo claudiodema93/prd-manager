@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 import {
@@ -14,7 +16,19 @@ import {
 let electronApp: ElectronApplication;
 let tempDir: string;
 
-const EXTERNAL_NAVIGATION_PATTERN = /example\.com/u;
+function storedSidebarOpen(homeDir: string): boolean | null {
+  try {
+    const file = path.join(homeDir, "preferences", "preferences.json");
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as {
+      sidebarOpen?: boolean;
+    };
+
+    return parsed.sidebarOpen ?? null;
+  } catch {
+    // The store writes atomically; a read can race the rename.
+    return null;
+  }
+}
 
 test.beforeAll(async () => {
   const cache = createTempCacheDir();
@@ -51,9 +65,8 @@ test("renders the first page", async () => {
 });
 
 /*
- * Runs before the navigation-blocking test below: a blocked `window.location`
- * assignment leaves the renderer with a navigation Playwright keeps waiting
- * for, which makes any later locator assertion time out.
+ * Navigation is asserted here; the blocked-navigation test lives in
+ * navigation.test.ts because it needs its own app instance.
  */
 test("navigates with the sidebar and marks the active route", async () => {
   const page: Page = await electronApp.firstWindow();
@@ -86,6 +99,32 @@ test("navigates with the sidebar and marks the active route", async () => {
   await expect(page.locator("header h1")).toHaveText("Home Page");
 });
 
+/*
+ * The write half of the sidebar preference. The read half (a stored `false`
+ * applied at startup) is covered by sidebar-state.test.ts, which needs its own
+ * app launch with a pre-seeded preferences file.
+ */
+test("persists the sidebar state to the preferences store", async () => {
+  const page: Page = await electronApp.firstWindow();
+  const trigger = page
+    .locator("header")
+    .getByRole("button", { name: "Toggle Sidebar" });
+  const sidebar = page.locator('[data-slot="sidebar"]');
+
+  await expect(sidebar).toHaveAttribute("data-state", "expanded");
+
+  await trigger.click();
+
+  await expect(sidebar).toHaveAttribute("data-state", "collapsed");
+  await expect.poll(() => storedSidebarOpen(tempDir)).toBe(false);
+
+  // Restore the default for the tests that follow.
+  await trigger.click();
+
+  await expect(sidebar).toHaveAttribute("data-state", "expanded");
+  await expect.poll(() => storedSidebarOpen(tempDir)).toBe(true);
+});
+
 test("exchanges data with the main process over the sandboxed IPC bridge", async () => {
   const page: Page = await electronApp.firstWindow();
   const version = await electronApp.evaluate(({ app }) => app.getVersion());
@@ -108,33 +147,4 @@ test("runs the renderer without Node integration", async () => {
       () => typeof (globalThis as { require?: unknown }).require
     )
   ).toBe("undefined");
-});
-
-test("blocks window.open and off-app navigation", async () => {
-  const page: Page = await electronApp.firstWindow();
-  const before = page.url();
-
-  expect(
-    await page.evaluate(() => window.open("https://example.com"))
-  ).toBeNull();
-
-  await page.evaluate(() => {
-    window.location.href = "https://example.com/";
-  });
-
-  // Race the navigation against a short grace period: a blocked navigation
-  // never resolves waitForURL, so it must lose the race.
-  const navigated = await Promise.race([
-    page
-      .waitForURL(EXTERNAL_NAVIGATION_PATTERN, { timeout: 1000 })
-      .then(() => true)
-      .catch(() => false),
-    new Promise<boolean>((resolve) => {
-      setTimeout(() => resolve(false), 500);
-    }),
-  ]);
-
-  expect(navigated).toBe(false);
-  expect(page.url()).toBe(before);
-  expect(electronApp.windows()).toHaveLength(1);
 });

@@ -10,5 +10,9 @@ export const DEFAULT_PAGE_TITLE_KEY = "appName";
  * in-memory router's initial paint) fall back to the application name.
  */
 export function getPageTitleKey(pathname: string): string {
-  return PAGE_TITLE_KEYS[pathname] ?? DEFAULT_PAGE_TITLE_KEY;
+  // `Object.hasOwn` keeps the lookup off the prototype chain, so a pathname
+  // such as "constructor" cannot return a function instead of the fallback.
+  return Object.hasOwn(PAGE_TITLE_KEYS, pathname)
+    ? PAGE_TITLE_KEYS[pathname]
+    : DEFAULT_PAGE_TITLE_KEY;
 }

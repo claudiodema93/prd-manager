@@ -1,5 +1,5 @@
 import type React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getSidebarOpen, setSidebarOpenPreference } from "@/actions/sidebar";
 import DragWindowRegion from "@/components/drag-window-region";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
@@ -13,16 +13,20 @@ export default function BaseLayout({
   children: React.ReactNode;
 }) {
   // The sidebar starts open for the first paint and adopts the stored value as
-  // soon as the IPC round-trip resolves; the window stays hidden until
-  // `ready-to-show`, so the switch is not visible.
+  // soon as the IPC round-trip resolves. The window is shown on `ready-to-show`,
+  // before that round-trip finishes, so a stored `false` can flash open once
+  // before collapsing.
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  // A toggle that lands while the read is in flight wins: the read was issued
+  // before the write, so applying it would undo the user's action.
+  const userToggled = useRef(false);
 
   useEffect(() => {
     let active = true;
 
     getSidebarOpen()
       .then((open) => {
-        if (active) {
+        if (active && !userToggled.current) {
           setSidebarOpen(open);
         }
       })
@@ -36,6 +40,7 @@ export default function BaseLayout({
   }, []);
 
   function handleSidebarOpenChange(open: boolean) {
+    userToggled.current = true;
     setSidebarOpen(open);
 
     // A failed write must not block the toggle: the new state is already
