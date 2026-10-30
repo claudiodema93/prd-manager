@@ -113,9 +113,8 @@ better-sqlite3 + Drizzle, with migrations applied on startup.
 
 ### Preferences
 
-`src/preferences/` wraps electron-store in the main process for the four user
-preferences: theme, language, window state and sidebar state (`preferences.json` in
-`userData`). The
+`src/preferences/` wraps electron-store in the main process for the three user
+preferences: theme, language and window state (`preferences.json` in `userData`). The
 package is ESM-only and is bundled into the CJS main bundle; keep it in `dependencies`
 but never import it from the renderer.
 
@@ -125,9 +124,7 @@ but never import it from the renderer.
   when the file cannot be read. It refuses symlinks, non-regular files and files over 64 KiB,
   writes `0600`, and honours `APP_PREFERENCES_DIR` (absolute) only in development/E2E builds.
 - Theme is applied to `nativeTheme.themeSource` before the window is created and persisted
-  by the theme handlers. Language is exposed through the `preferences` oRPC namespace, which
-  also persists `sidebarOpen`; the renderer keeps the layout sidebar controlled through it
-  instead of a cookie, which `file://` would not keep.
+  by the theme handlers. Language is exposed through the `preferences` oRPC namespace.
   Window bounds are restored in `createWindow` and saved on a debounce from
   `resize`/`move`, plus `maximize`, `unmaximize` and `close`.
 

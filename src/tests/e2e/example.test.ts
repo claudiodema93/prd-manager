@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 import {
@@ -15,20 +13,6 @@ import {
 
 let electronApp: ElectronApplication;
 let tempDir: string;
-
-function storedSidebarOpen(homeDir: string): boolean | null {
-  try {
-    const file = path.join(homeDir, "preferences", "preferences.json");
-    const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as {
-      sidebarOpen?: boolean;
-    };
-
-    return parsed.sidebarOpen ?? null;
-  } catch {
-    // The store writes atomically; a read can race the rename.
-    return null;
-  }
-}
 
 test.beforeAll(async () => {
   const cache = createTempCacheDir();
@@ -100,11 +84,11 @@ test("navigates with the sidebar and marks the active route", async () => {
 });
 
 /*
- * The write half of the sidebar preference. The read half (a stored `false`
- * applied at startup) is covered by sidebar-state.test.ts, which needs its own
- * app launch with a pre-seeded preferences file.
+ * Also guards shutdown: while the sidebar wrote `document.cookie` on toggle,
+ * toggling it left the packaged app running and this suite's `afterAll` close
+ * timed out.
  */
-test("persists the sidebar state to the preferences store", async () => {
+test("toggles the sidebar", async () => {
   const page: Page = await electronApp.firstWindow();
   const trigger = page
     .locator("header")
@@ -114,15 +98,10 @@ test("persists the sidebar state to the preferences store", async () => {
   await expect(sidebar).toHaveAttribute("data-state", "expanded");
 
   await trigger.click();
-
   await expect(sidebar).toHaveAttribute("data-state", "collapsed");
-  await expect.poll(() => storedSidebarOpen(tempDir)).toBe(false);
 
-  // Restore the default for the tests that follow.
   await trigger.click();
-
   await expect(sidebar).toHaveAttribute("data-state", "expanded");
-  await expect.poll(() => storedSidebarOpen(tempDir)).toBe(true);
 });
 
 test("exchanges data with the main process over the sandboxed IPC bridge", async () => {

@@ -2,15 +2,9 @@ import { os } from "@orpc/server";
 import { nativeTheme } from "electron";
 import {
   getLanguagePreference,
-  getSidebarOpenPreference,
   setLanguagePreference,
-  setSidebarOpenPreference,
 } from "@/preferences/store";
-import {
-  getPreferencesOutputSchema,
-  setLanguageInputSchema,
-  setSidebarOpenInputSchema,
-} from "./schemas";
+import { getPreferencesOutputSchema, setLanguageInputSchema } from "./schemas";
 
 /**
  * `nativeTheme.themeSource` is the main-process source of truth for the
@@ -20,7 +14,6 @@ import {
 function currentPreferences() {
   return {
     language: getLanguagePreference(),
-    sidebarOpen: getSidebarOpenPreference(),
     theme: nativeTheme.themeSource,
   };
 }
@@ -34,15 +27,6 @@ export const setLanguage = os
   .output(getPreferencesOutputSchema)
   .handler(({ input }) => {
     setLanguagePreference(input.language);
-
-    return currentPreferences();
-  });
-
-export const setSidebarOpen = os
-  .input(setSidebarOpenInputSchema)
-  .output(getPreferencesOutputSchema)
-  .handler(({ input }) => {
-    setSidebarOpenPreference(input.open);
 
     return currentPreferences();
   });

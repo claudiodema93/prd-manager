@@ -7,7 +7,6 @@ export const languageSchema = z.enum(LANGUAGE_KEYS);
 export const getPreferencesOutputSchema = z
   .object({
     language: languageSchema,
-    sidebarOpen: z.boolean(),
     theme: themeSourceSchema,
   })
   .strict();
@@ -15,11 +14,5 @@ export const getPreferencesOutputSchema = z
 export const setLanguageInputSchema = z
   .object({
     language: languageSchema,
-  })
-  .strict();
-
-export const setSidebarOpenInputSchema = z
-  .object({
-    open: z.boolean(),
   })
   .strict();

@@ -201,10 +201,6 @@ export function getWindowState(): WindowState {
   return getPreferences().window;
 }
 
-export function getSidebarOpenPreference(): boolean {
-  return getPreferences().sidebarOpen;
-}
-
 /**
  * A failed write must never reject the IPC call that triggered it: the theme
  * or language has already been applied in memory, and the renderer should
@@ -228,19 +224,6 @@ export function setThemePreference(theme: ThemeSource): void {
 
 export function setLanguagePreference(language: LanguageKey): void {
   writePreference((current) => current.set("language", language));
-}
-
-export function setSidebarOpenPreference(open: boolean): void {
-  // Mirrors setWindowState: validate at the store boundary as well, so a
-  // future non-IPC caller cannot write an unvalidated value.
-  if (typeof open !== "boolean") {
-    console.warn(
-      "[preferences] Refusing to persist a non-boolean sidebar state."
-    );
-    return;
-  }
-
-  writePreference((current) => current.set("sidebarOpen", open));
 }
 
 export function setWindowState(window: WindowState): void {

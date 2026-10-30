@@ -34,7 +34,6 @@ type StoreModule = typeof import("@/preferences/store");
 
 const EXPECTED_DEFAULTS = {
   language: "en",
-  sidebarOpen: true,
   theme: "system",
   window: { height: 600, isMaximized: false, width: 800 },
 };
@@ -81,7 +80,6 @@ describe("preferences store", () => {
 
     store.setThemePreference("dark");
     store.setLanguagePreference("pt-BR");
-    store.setSidebarOpenPreference(false);
 
     expect(store.getPreferences()).toEqual(EXPECTED_DEFAULTS);
   });
@@ -108,13 +106,12 @@ describe("preferences store", () => {
     expect(error).not.toHaveBeenCalled();
   });
 
-  it("persists theme, language, sidebar and window state across instances", async () => {
+  it("persists theme, language and window state across instances", async () => {
     const store = await loadStore();
     store.initializePreferences();
 
     store.setThemePreference("dark");
     store.setLanguagePreference("pt-BR");
-    store.setSidebarOpenPreference(false);
     store.setWindowState({
       height: 700,
       isMaximized: true,
@@ -125,7 +122,6 @@ describe("preferences store", () => {
 
     expect(store.getPreferences()).toEqual({
       language: "pt-BR",
-      sidebarOpen: false,
       theme: "dark",
       window: { height: 700, isMaximized: true, width: 900, x: 20, y: 30 },
     });
@@ -135,7 +131,6 @@ describe("preferences store", () => {
 
     expect(store.getPreferences()).toEqual({
       language: "pt-BR",
-      sidebarOpen: false,
       theme: "dark",
       window: { height: 700, isMaximized: true, width: 900, x: 20, y: 30 },
     });

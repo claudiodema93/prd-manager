@@ -51,20 +51,13 @@ vi.mock("electron", () => ({
 
 const preferencesState = vi.hoisted(() => ({
   language: "en" as "en" | "pt-BR",
-  setSidebarOpen: vi.fn(),
   setTheme: vi.fn(),
-  sidebarOpen: true,
 }));
 
 vi.mock("@/preferences/store", () => ({
   getLanguagePreference: () => preferencesState.language,
-  getSidebarOpenPreference: () => preferencesState.sidebarOpen,
   setLanguagePreference: (language: "en" | "pt-BR") => {
     preferencesState.language = language;
-  },
-  setSidebarOpenPreference: (open: boolean) => {
-    preferencesState.sidebarOpen = open;
-    preferencesState.setSidebarOpen(open);
   },
   setThemePreference: preferencesState.setTheme,
 }));
@@ -95,8 +88,6 @@ beforeEach(() => {
     filePaths: ["/tmp/picked.txt"],
   });
   preferencesState.language = "en";
-  preferencesState.sidebarOpen = true;
-  preferencesState.setSidebarOpen.mockReset();
   preferencesState.setTheme.mockReset();
 
   sqlite = new Database(":memory:");
@@ -165,32 +156,15 @@ describe("production IPC router", () => {
   it("serves and persists preferences over the wire", async () => {
     await expect(client.preferences.getPreferences()).resolves.toEqual({
       language: "en",
-      sidebarOpen: true,
       theme: "system",
     });
 
     await expect(
       client.preferences.setLanguage({ language: "pt-BR" })
-    ).resolves.toEqual({
-      language: "pt-BR",
-      sidebarOpen: true,
-      theme: "system",
-    });
-
-    await expect(
-      client.preferences.setSidebarOpen({ open: false })
-    ).resolves.toEqual({
-      language: "pt-BR",
-      sidebarOpen: false,
-      theme: "system",
-    });
-
-    // The round trip above is the behavioural assertion; the store mock is
-    // stateful, so no extra spy assertion is needed here.
+    ).resolves.toEqual({ language: "pt-BR", theme: "system" });
 
     await expect(client.preferences.getPreferences()).resolves.toEqual({
       language: "pt-BR",
-      sidebarOpen: false,
       theme: "system",
     });
   });
