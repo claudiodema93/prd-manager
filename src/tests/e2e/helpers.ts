@@ -31,7 +31,13 @@ const PACKAGE_COMMAND = "SAUGER_E2E=1 npm run package";
 const ENV_ALLOWLIST = [
   "PATH",
   "DISPLAY",
+  // xvfb-run authenticates the X server with a temporary Xauthority file and
+  // exports XAUTHORITY. Without it, Electron reports "Authorization required"
+  // and then "Missing X server or $DISPLAY" on CI.
+  "XAUTHORITY",
   "WAYLAND_DISPLAY",
+  "XDG_RUNTIME_DIR",
+  "DBUS_SESSION_BUS_ADDRESS",
   "TMPDIR",
   "LANG",
   "LC_ALL",
