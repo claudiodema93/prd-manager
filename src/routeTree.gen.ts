@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as CustomersRouteImport } from './routes/customers'
 import { Route as SecondRouteImport } from './routes/second'
 import { Route as SettingsRouteRouteImport } from './routes/settings/route'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
@@ -19,6 +20,11 @@ import { Route as SettingsFoldersRouteImport } from './routes/settings/folders'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CustomersRoute = CustomersRouteImport.update({
+  id: '/customers',
+  path: '/customers',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SecondRoute = SecondRouteImport.update({
@@ -50,6 +56,7 @@ const SettingsFoldersRoute = SettingsFoldersRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
+  '/customers': typeof CustomersRoute
   '/second': typeof SecondRoute
   '/settings/display': typeof SettingsDisplayRoute
   '/settings/folders': typeof SettingsFoldersRoute
@@ -57,6 +64,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/customers': typeof CustomersRoute
   '/second': typeof SecondRoute
   '/settings/display': typeof SettingsDisplayRoute
   '/settings/folders': typeof SettingsFoldersRoute
@@ -66,6 +74,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
+  '/customers': typeof CustomersRoute
   '/second': typeof SecondRoute
   '/settings/display': typeof SettingsDisplayRoute
   '/settings/folders': typeof SettingsFoldersRoute
@@ -76,16 +85,24 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/settings'
+    | '/customers'
     | '/second'
     | '/settings/display'
     | '/settings/folders'
     | '/settings/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/second' | '/settings/display' | '/settings/folders' | '/settings'
+  to:
+    | '/'
+    | '/customers'
+    | '/second'
+    | '/settings/display'
+    | '/settings/folders'
+    | '/settings'
   id:
     | '__root__'
     | '/'
     | '/settings'
+    | '/customers'
     | '/second'
     | '/settings/display'
     | '/settings/folders'
@@ -95,6 +112,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SettingsRouteRoute: typeof SettingsRouteRouteWithChildren
+  CustomersRoute: typeof CustomersRoute
   SecondRoute: typeof SecondRoute
 }
 
@@ -105,6 +123,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/customers': {
+      id: '/customers'
+      path: '/customers'
+      fullPath: '/customers'
+      preLoaderRoute: typeof CustomersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/second': {
@@ -164,6 +189,7 @@ const SettingsRouteRouteWithChildren = SettingsRouteRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SettingsRouteRoute: SettingsRouteRouteWithChildren,
+  CustomersRoute: CustomersRoute,
   SecondRoute: SecondRoute,
 }
 export const routeTree = rootRouteImport

@@ -71,6 +71,13 @@ will navigate to — that is why production navigation is restricted to the bund
 lives in `src/layouts/` (`base-layout.tsx` owns the `SidebarProvider`, `app-sidebar.tsx` the
 navigation, `site-header.tsx` the header); routes render inside it and stay navigation-free.
 
+**Customers UI**: `/customers` (`src/routes/customers.tsx` → `src/pages/customers/`) is the
+customer list plus a create/edit `Sheet`, a delete `AlertDialog` and a reusable section-definition
+editor. It talks only to `src/actions/customers.ts` and `src/actions/folders.ts`; importing
+`src/customers/**`, `src/ipc/**` (beyond `import type`) or any other main-process module at runtime
+would pull Node globals into the renderer. The backend stays authoritative for key-template
+validation, and the renderer reports its BAD_REQUEST/CONFLICT/PRECONDITION_FAILED/NOT_FOUND failures.
+
 **Renderer → IPC access** always goes through `src/actions/*.ts`, which are thin typed wrappers
 around `ipc.client.<namespace>.<procedure>()`. Components import actions, never `ipc` directly.
 
