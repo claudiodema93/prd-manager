@@ -1,15 +1,19 @@
 import {
   clearCustomers,
+  createCustomer,
   getCustomer,
   listCustomers,
   removeCustomer,
-  upsertCustomer,
+  scanCustomers,
+  updateCustomer,
 } from "./handlers";
 
 export const customers = {
   clearCustomers,
+  createCustomer,
   getCustomer,
   listCustomers,
   removeCustomer,
-  upsertCustomer,
+  scanCustomers,
+  updateCustomer,
 };

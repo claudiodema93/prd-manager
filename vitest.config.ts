@@ -41,6 +41,14 @@ export default defineConfig({
         branches: 55,
         functions: 38,
         lines: 55,
+        // The customer service owns the filesystem reconciliation and the
+        // session's security-critical path handling; keep it well covered.
+        "src/customers/**": {
+          branches: 80,
+          functions: 85,
+          lines: 85,
+          statements: 85,
+        },
         "src/db/**": {
           branches: 80,
           functions: 90,

@@ -1,16 +1,35 @@
 import { ORPCError, os } from "@orpc/server";
 import { and, count, eq, sql } from "drizzle-orm";
+import {
+  type CustomerServiceContext,
+  createCustomer as createCustomerService,
+  removeCustomer as removeCustomerService,
+  updateCustomer as updateCustomerService,
+} from "@/customers/crud";
+import {
+  type CustomerErrorCode,
+  CustomerServiceError,
+} from "@/customers/errors";
+import { withCustomerLock } from "@/customers/lock";
+import { scanCustomers as scanCustomersService } from "@/customers/scan";
+import { type CustomerRecord, deleteAllCustomerRows } from "@/customers/store";
 import { getDatabase } from "@/db";
 import { customers } from "@/db/schema";
+import { getFoldersPreference } from "@/preferences/store";
 import {
   clearCustomersOutputSchema,
+  createCustomerInputSchema,
+  createCustomerOutputSchema,
+  customerCacheMetadataSchema,
   customerFolderPathInputSchema,
   getCustomerOutputSchema,
   listCustomersInputSchema,
   listCustomersOutputSchema,
   removeCustomerOutputSchema,
-  upsertCustomerInputSchema,
-  upsertCustomerOutputSchema,
+  scanCustomersInputSchema,
+  scanCustomersOutputSchema,
+  updateCustomerInputSchema,
+  updateCustomerOutputSchema,
 } from "./schemas";
 
 // List responses only need summary columns; metadata is fetched on demand.
@@ -28,18 +47,97 @@ const customerSummaryColumns = {
   updatedAt: customers.updatedAt,
 };
 
-// The search column stores the three user-visible values pre-folded to NFC and
-// lower case, so `instr(search_text, ?)` matches non-ASCII text regardless of
-// case or Unicode composition without a per-row JavaScript function.
-function normalizeSearchText(
-  customerCode: string,
-  folderName: string,
-  name: string | null
-): string {
-  return [customerCode, folderName, name ?? ""]
-    .join(" ")
-    .normalize("NFC")
-    .toLocaleLowerCase();
+// `articleCount` lives inside the metadata document, not in its own column.
+const articleCountColumn = sql<number>`coalesce(json_extract(${customers.metadataJson}, '$.articleCount'), 0)`;
+
+const CONFLICT_ERROR_CODES: ReadonlySet<CustomerErrorCode> = new Set([
+  "CUSTOMER_CODE_EXHAUSTED",
+  "CUSTOMER_CODE_TAKEN",
+  "CUSTOMER_HAS_ARTICLES",
+  "KEY_LOCKED",
+]);
+
+const PRECONDITION_ERROR_CODES: ReadonlySet<CustomerErrorCode> = new Set([
+  "ROOT_NOT_CONFIGURED",
+  "ROOT_NOT_DIRECTORY",
+  "ROOT_NOT_FOUND",
+  "ROOT_SYMLINK",
+  "TRASH_NOT_CONFIGURED",
+  "TRASH_NOT_DIRECTORY",
+  "TRASH_NOT_FOUND",
+  "TRASH_SYMLINK",
+]);
+
+const BAD_REQUEST_ERROR_CODES: ReadonlySet<CustomerErrorCode> = new Set([
+  "CONFIG_INVALID",
+  "CONFIG_INVALID_JSON",
+  "CONFIG_MISSING",
+  "CONFIG_UNREADABLE",
+  "CONFIG_UNSUPPORTED_VERSION",
+  "CONFIG_VERSION_CONFLICT",
+  "CUSTOMER_CODE_INVALID",
+  "CUSTOMER_FOLDER_NAME_INVALID",
+  "CUSTOMER_FOLDER_NOT_DIRECTORY",
+  "CUSTOMER_FOLDER_SYMLINK",
+  "CUSTOMER_NAME_INVALID",
+  "INVALID_OPERATION",
+  "KEY_RENDER_INVALID",
+  "KEY_TEMPLATE_INVALID",
+]);
+
+/**
+ * Translates a domain error into the oRPC status the renderer expects.
+ *
+ * `READ_FAILED`, `WRITE_FAILED` and `TRASH_MOVE_FAILED` are deliberately not
+ * mapped: they are unexpected and must keep their original class so the
+ * interceptor logs them as real 5xx failures.
+ */
+function mapCustomerError(error: unknown): never {
+  if (error instanceof CustomerServiceError) {
+    if (error.code === "CUSTOMER_NOT_FOUND") {
+      throw new ORPCError("NOT_FOUND", { message: error.message });
+    }
+
+    if (CONFLICT_ERROR_CODES.has(error.code)) {
+      throw new ORPCError("CONFLICT", { message: error.message });
+    }
+
+    if (PRECONDITION_ERROR_CODES.has(error.code)) {
+      throw new ORPCError("PRECONDITION_FAILED", { message: error.message });
+    }
+
+    if (BAD_REQUEST_ERROR_CODES.has(error.code)) {
+      throw new ORPCError("BAD_REQUEST", { message: error.message });
+    }
+  }
+
+  throw error;
+}
+
+function customerServiceContext(): CustomerServiceContext {
+  const folders = getFoldersPreference();
+
+  return {
+    articlesDirectory: folders.articlesDirectory,
+    db: getDatabase(),
+    trashDirectory: folders.trashDirectory,
+  };
+}
+
+/**
+ * Adds the derived `articleCount` and normalises the cached metadata so the
+ * result satisfies the wire schema. Legacy rows may still hold an arbitrary
+ * metadata document; normalising it here keeps the caller working instead of
+ * failing the whole response.
+ */
+function customerOutput(record: CustomerRecord) {
+  const metadata = customerCacheMetadataSchema.safeParse(record.metadataJson);
+
+  return {
+    ...record,
+    articleCount: metadata.success ? metadata.data.articleCount : 0,
+    metadataJson: metadata.success ? metadata.data : null,
+  };
 }
 
 export const listCustomers = os
@@ -59,6 +157,7 @@ export const listCustomers = os
     const rows = db
       .select({
         ...customerSummaryColumns,
+        articleCount: articleCountColumn,
         // Window function: one scan returns the page and the full total.
         total: sql<number>`count(*) over ()`,
       })
@@ -81,7 +180,19 @@ export const listCustomers = os
         ?.total ??
       0;
 
-    const items = rows.map(({ total: _total, ...item }) => item);
+    const items = rows.map(({ articleCount, total: _total, ...item }) => {
+      const articleCountValue = Number(articleCount);
+
+      // Legacy or hand-edited metadata can contain a non-integer count; never
+      // let one bad row fail the whole list response.
+      return {
+        ...item,
+        articleCount:
+          Number.isInteger(articleCountValue) && articleCountValue >= 0
+            ? articleCountValue
+            : 0,
+      };
+    });
 
     return { items, total };
   });
@@ -92,113 +203,84 @@ export const getCustomer = os
   .output(getCustomerOutputSchema)
   .handler(({ input }) => {
     const db = getDatabase();
-
-    return (
+    const row =
       db
         .select()
         .from(customers)
         .where(eq(customers.folderPath, input.folderPath))
-        .get() ?? null
-    );
+        .get() ?? null;
+
+    if (!row) {
+      return null;
+    }
+
+    return customerOutput(row);
   });
 
-export const upsertCustomer = os
-  .input(upsertCustomerInputSchema)
-  .output(upsertCustomerOutputSchema)
-  .handler(({ input }) => {
-    const db = getDatabase();
-    const now = Date.now();
+export const scanCustomers = os
+  .input(scanCustomersInputSchema)
+  .output(scanCustomersOutputSchema)
+  .handler(async () => {
+    try {
+      const { articlesDirectory } = getFoldersPreference();
 
-    // A partial update keeps the stored name, so the search text must be built
-    // from the value that will actually be persisted.
-    const effectiveName =
-      input.name === undefined
-        ? (db
-            .select({ name: customers.name })
-            .from(customers)
-            .where(eq(customers.folderPath, input.folderPath))
-            .get()?.name ?? null)
-        : input.name;
-    const searchText = normalizeSearchText(
-      input.customerCode,
-      input.folderName,
-      effectiveName
-    );
+      return await scanCustomersService({
+        db: getDatabase(),
+        rootDirectory: articlesDirectory,
+      });
+    } catch (error) {
+      throw mapCustomerError(error);
+    }
+  });
 
-    // Insert needs every column, so omitted optional fields become NULL.
-    const row = {
-      articleSchemaVersion: input.articleSchemaVersion ?? null,
-      createdAt: now,
-      customerCode: input.customerCode,
-      folderMtimeMs: input.folderMtimeMs,
-      folderName: input.folderName,
-      folderPath: input.folderPath,
-      metadataJson: input.metadataJson ?? null,
-      name: input.name ?? null,
-      revisionSchemaVersion: input.revisionSchemaVersion ?? null,
-      schemaVersion: input.schemaVersion ?? null,
-      searchText,
-      status: input.status,
-      updatedAt: now,
-    };
+export const createCustomer = os
+  .input(createCustomerInputSchema)
+  .output(createCustomerOutputSchema)
+  .handler(async ({ input }) => {
+    try {
+      const customer = await createCustomerService(
+        customerServiceContext(),
+        input
+      );
 
-    // Update uses patch semantics: an omitted optional field keeps its stored
-    // value, while an explicit `null` clears it. `createdAt` is never updated.
-    const updates = {
-      ...(input.articleSchemaVersion === undefined
-        ? {}
-        : { articleSchemaVersion: input.articleSchemaVersion }),
-      customerCode: input.customerCode,
-      folderMtimeMs: input.folderMtimeMs,
-      folderName: input.folderName,
-      ...(input.metadataJson === undefined
-        ? {}
-        : { metadataJson: input.metadataJson }),
-      ...(input.name === undefined ? {} : { name: input.name }),
-      ...(input.revisionSchemaVersion === undefined
-        ? {}
-        : { revisionSchemaVersion: input.revisionSchemaVersion }),
-      ...(input.schemaVersion === undefined
-        ? {}
-        : { schemaVersion: input.schemaVersion }),
-      searchText,
-      status: input.status,
-      updatedAt: now,
-    };
+      return customerOutput(customer);
+    } catch (error) {
+      throw mapCustomerError(error);
+    }
+  });
 
-    const [customer] = db
-      .insert(customers)
-      .values(row)
-      .onConflictDoUpdate({ set: updates, target: customers.folderPath })
-      .returning()
-      .all();
+export const updateCustomer = os
+  .input(updateCustomerInputSchema)
+  .output(updateCustomerOutputSchema)
+  .handler(async ({ input }) => {
+    try {
+      const customer = await updateCustomerService(
+        customerServiceContext(),
+        input
+      );
 
-    return customer;
+      return customerOutput(customer);
+    } catch (error) {
+      throw mapCustomerError(error);
+    }
   });
 
 export const removeCustomer = os
   .input(customerFolderPathInputSchema)
   .output(removeCustomerOutputSchema)
-  .handler(({ input }) => {
-    const db = getDatabase();
-    const result = db
-      .delete(customers)
-      .where(eq(customers.folderPath, input.folderPath))
-      .run();
-
-    if (result.changes === 0) {
-      throw new ORPCError("NOT_FOUND", {
-        message: `No customer found for "${input.folderPath}".`,
-      });
+  .handler(async ({ input }) => {
+    try {
+      return await removeCustomerService(customerServiceContext(), input);
+    } catch (error) {
+      throw mapCustomerError(error);
     }
-
-    return input.folderPath;
   });
 
+// Cache-only reset: the filesystem is the source of truth and is never touched.
+// It shares the customer lock so a clear cannot interleave with a scan that is
+// repopulating the cache.
 export const clearCustomers = os
   .output(clearCustomersOutputSchema)
-  .handler(() => {
-    const db = getDatabase();
-
-    return db.delete(customers).run().changes;
-  });
+  .handler(() =>
+    withCustomerLock(async () => deleteAllCustomerRows(getDatabase()))
+  );

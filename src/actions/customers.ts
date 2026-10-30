@@ -1,12 +1,14 @@
 import { ipc } from "@/ipc/manager";
 import type {
+  CreateCustomerInput,
   ListCustomersInput,
-  UpsertCustomerInput,
+  UpdateCustomerInput,
 } from "@/types/customers";
 
 export type {
+  CreateCustomerInput,
   ListCustomersInput,
-  UpsertCustomerInput,
+  UpdateCustomerInput,
 } from "@/types/customers";
 
 export function listCustomers(input: ListCustomersInput = {}) {
@@ -17,12 +19,20 @@ export function getCustomer(folderPath: string) {
   return ipc.client.customers.getCustomer({ folderPath });
 }
 
-export function upsertCustomer(input: UpsertCustomerInput) {
-  return ipc.client.customers.upsertCustomer(input);
+export function createCustomer(input: CreateCustomerInput) {
+  return ipc.client.customers.createCustomer(input);
+}
+
+export function updateCustomer(input: UpdateCustomerInput) {
+  return ipc.client.customers.updateCustomer(input);
 }
 
 export function removeCustomer(folderPath: string) {
   return ipc.client.customers.removeCustomer({ folderPath });
+}
+
+export function scanCustomers() {
+  return ipc.client.customers.scanCustomers({});
 }
 
 export function clearCustomers() {

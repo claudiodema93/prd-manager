@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { MessageChannel } from "node:worker_threads";
 import { createORPCClient } from "@orpc/client";
@@ -89,12 +91,81 @@ const schema = { customers: customersTable };
 type TestDatabase = ReturnType<typeof drizzle<typeof schema>>;
 type TestClient = RouterClient<typeof router>;
 
+interface TestParameters {
+  readonly [name: string]: {
+    readonly default?: string;
+    readonly required: boolean;
+    readonly type: "bool" | "number" | "text";
+  };
+}
+
+interface TestSection {
+  readonly key: string;
+  readonly parameters: TestParameters;
+  readonly schemaVersion: number;
+}
+
+const ARTICLE_SECTION: TestSection = {
+  key: "{CODE}[_EVO{EVO:00}]",
+  parameters: {
+    CODE: { required: true, type: "text" },
+    EVO: { default: "0", required: true, type: "number" },
+  },
+  schemaVersion: 1,
+};
+
+const REVISION_SECTION: TestSection = {
+  key: "REV_{REV}",
+  parameters: {
+    REV: { default: "0", required: true, type: "number" },
+  },
+  schemaVersion: 1,
+};
+
+const CONFIG_FILE_NAME = "customer_data.json";
+
+const EMPTY_SCAN_RESULT = {
+  created: 0,
+  issues: [],
+  removed: 0,
+  root: null,
+  scanned: 0,
+  unchanged: 0,
+  updated: 0,
+};
+
+/** Fresh copies so a mutation in one call cannot leak into the next. */
+function copySection(section: TestSection): TestSection {
+  return {
+    key: section.key,
+    parameters: { ...section.parameters },
+    schemaVersion: section.schemaVersion,
+  };
+}
+
+function customerInput(name = "Acme") {
+  return {
+    article: copySection(ARTICLE_SECTION),
+    name,
+    revision: copySection(REVISION_SECTION),
+  };
+}
+
+async function makeTempDirectory(prefix: string): Promise<string> {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+
+  tempDirectories.push(directory);
+
+  return directory;
+}
+
 const migrationsFolder = path.resolve(import.meta.dirname, "../../../drizzle");
 
 let sqlite: Database.Database;
 let client: TestClient;
 let clientPort: MessageChannel["port1"];
 let serverPort: MessageChannel["port2"];
+let tempDirectories: string[];
 
 beforeEach(() => {
   electronState.themeSource = "system";
@@ -113,6 +184,8 @@ beforeEach(() => {
   preferencesState.setLanguage.mockReset();
   preferencesState.setTheme.mockReset();
 
+  tempDirectories = [];
+
   sqlite = new Database(":memory:");
   const database: TestDatabase = drizzle({ client: sqlite, schema });
 
@@ -130,11 +203,17 @@ beforeEach(() => {
   serverPort.start();
 });
 
-afterEach(() => {
+afterEach(async () => {
   clientPort.close();
   serverPort.close();
   ipcContext.mainWindow = undefined;
   sqlite.close();
+
+  await Promise.all(
+    tempDirectories.map((directory) =>
+      fs.rm(directory, { force: true, recursive: true })
+    )
+  );
 });
 
 describe("production IPC router", () => {
@@ -144,12 +223,128 @@ describe("production IPC router", () => {
     expect(page).toEqual({ items: [], total: 0 });
   });
 
-  it("preserves ORPC error codes across the transport", async () => {
+  it("serves an empty customer scan when no root is configured", async () => {
+    await expect(client.customers.scanCustomers({})).resolves.toEqual(
+      EMPTY_SCAN_RESULT
+    );
+  });
+
+  it("rejects removeCustomer before the root check when no root is configured", async () => {
+    // The root guard runs before the folder lookup, so an unconfigured root is
+    // PRECONDITION_FAILED rather than NOT_FOUND.
     await expect(
       client.customers.removeCustomer({
         folderPath: path.resolve("/customers/missing"),
       })
-    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+  });
+
+  it("returns null for a customer that is not cached", async () => {
+    await expect(
+      client.customers.getCustomer({
+        folderPath: path.resolve("/customers/missing"),
+      })
+    ).resolves.toBeNull();
+  });
+
+  it("runs the full customer lifecycle against the filesystem and the cache", async () => {
+    const articlesDirectory = await makeTempDirectory("ipc-router-customers-");
+    const trashDirectory = await makeTempDirectory(
+      "ipc-router-customers-trash-"
+    );
+
+    preferencesState.folders = {
+      articlesDirectory,
+      issuesDirectory: null,
+      trashDirectory,
+    };
+
+    const created = await client.customers.createCustomer(customerInput());
+
+    expect(created).toMatchObject({
+      articleCount: 0,
+      customerCode: "0001",
+      folderName: "customer-0001",
+    });
+
+    const { folderPath } = created;
+    const listed = await client.customers.listCustomers({});
+
+    expect(listed).toMatchObject({ total: 1 });
+    expect(listed.items).toHaveLength(1);
+    expect(listed.items[0]).toMatchObject({
+      articleCount: 0,
+      folderName: "customer-0001",
+    });
+    expect(listed.items[0]).not.toHaveProperty("metadataJson");
+
+    const updated = await client.customers.updateCustomer({
+      folderPath,
+      name: "Beta",
+    });
+
+    expect(updated.name).toBe("Beta");
+
+    const raw = await fs.readFile(
+      path.join(folderPath, CONFIG_FILE_NAME),
+      "utf8"
+    );
+
+    expect(JSON.parse(raw)).toMatchObject({ customerName: "Beta" });
+
+    const detail = await client.customers.getCustomer({ folderPath });
+
+    expect(detail?.name).toBe("Beta");
+    expect(detail?.metadataJson?.article?.key).toBe(ARTICLE_SECTION.key);
+    expect(detail?.metadataJson?.articleCount).toBe(0);
+
+    await expect(client.customers.removeCustomer({ folderPath })).resolves.toBe(
+      folderPath
+    );
+
+    await expect(
+      fs.lstat(path.join(trashDirectory, "customer-0001"))
+    ).resolves.toBeDefined();
+    await expect(fs.lstat(folderPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    await expect(client.customers.listCustomers({})).resolves.toEqual({
+      items: [],
+      total: 0,
+    });
+    await expect(client.customers.clearCustomers()).resolves.toBe(0);
+  });
+
+  it("clears the cached customers when the articles root changes", async () => {
+    const firstRoot = await makeTempDirectory("ipc-router-customers-first-");
+    const secondRoot = await makeTempDirectory("ipc-router-customers-second-");
+    const trashDirectory = await makeTempDirectory(
+      "ipc-router-customers-trash-"
+    );
+
+    preferencesState.folders = {
+      articlesDirectory: firstRoot,
+      issuesDirectory: null,
+      trashDirectory,
+    };
+
+    await client.customers.createCustomer(customerInput());
+
+    await expect(client.customers.listCustomers({})).resolves.toMatchObject({
+      total: 1,
+    });
+
+    await client.preferences.setFolder({
+      directory: secondRoot,
+      key: "articlesDirectory",
+    });
+
+    // Rows from the old root must not linger; the next scan rebuilds the cache.
+    await expect(client.customers.listCustomers({})).resolves.toEqual({
+      items: [],
+      total: 0,
+    });
   });
 
   it("runs a window procedure against the context window", async () => {
