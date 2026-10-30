@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appVersion, currentPlatfom } from "@/ipc/app/handlers";
 import { ipcContext } from "@/ipc/context";
 import { logRpcError } from "@/ipc/handler";
+import { getPreferences, setLanguage } from "@/ipc/preferences/handlers";
 import { openExternalLink } from "@/ipc/shell/handlers";
 import {
   getCurrentThemeMode,
@@ -27,6 +28,19 @@ const electronState = vi.hoisted(() => ({
   openExternal: vi.fn(),
   systemDark: false,
   themeSource: "system" as "light" | "dark" | "system",
+}));
+
+const preferencesState = vi.hoisted(() => ({
+  language: "en" as "en" | "pt-BR",
+  setTheme: vi.fn(),
+}));
+
+vi.mock("@/preferences/store", () => ({
+  getLanguagePreference: () => preferencesState.language,
+  setLanguagePreference: (language: "en" | "pt-BR") => {
+    preferencesState.language = language;
+  },
+  setThemePreference: preferencesState.setTheme,
 }));
 
 vi.mock("electron", () => ({
@@ -68,6 +82,8 @@ beforeEach(() => {
   electronState.systemDark = false;
   electronState.openExternal.mockReset();
   electronState.openExternal.mockResolvedValue(undefined);
+  preferencesState.language = "en";
+  preferencesState.setTheme.mockReset();
 });
 
 afterEach(() => {
@@ -140,6 +156,7 @@ describe("theme handlers", () => {
       source: "light",
     });
     expect(electronState.themeSource).toBe("light");
+    expect(preferencesState.setTheme).toHaveBeenCalledWith("light");
   });
 
   it("sets an explicit dark theme", async () => {
@@ -172,6 +189,7 @@ describe("theme handlers", () => {
       dark: false,
       source: "light",
     });
+    expect(preferencesState.setTheme).toHaveBeenLastCalledWith("light");
   });
 
   it("rejects an unsupported theme mode", async () => {
@@ -179,6 +197,35 @@ describe("theme handlers", () => {
       call(setThemeMode, { mode: "purple" as unknown as "light" })
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(electronState.themeSource).toBe("system");
+  });
+});
+
+describe("preferences handlers", () => {
+  it("returns the stored language and the current theme", async () => {
+    preferencesState.language = "pt-BR";
+    electronState.themeSource = "dark";
+
+    await expect(call(getPreferences, undefined)).resolves.toEqual({
+      language: "pt-BR",
+      theme: "dark",
+    });
+  });
+
+  it("persists a supported language", async () => {
+    await expect(call(setLanguage, { language: "pt-BR" })).resolves.toEqual({
+      language: "pt-BR",
+      theme: "system",
+    });
+
+    expect(preferencesState.language).toBe("pt-BR");
+  });
+
+  it("rejects an unsupported language without persisting it", async () => {
+    await expect(
+      call(setLanguage, { language: "fr" as unknown as "en" })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+    expect(preferencesState.language).toBe("en");
   });
 });
 

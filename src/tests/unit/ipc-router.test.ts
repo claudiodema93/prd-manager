@@ -19,6 +19,7 @@ import { router } from "@/ipc/router";
  */
 
 const electronState = vi.hoisted(() => ({
+  showOpenDialog: vi.fn(),
   systemDark: false,
   themeSource: "system" as "light" | "dark" | "system",
 }));
@@ -26,6 +27,9 @@ const electronState = vi.hoisted(() => ({
 vi.mock("electron", () => ({
   app: {
     getVersion: () => "1.4.1",
+  },
+  dialog: {
+    showOpenDialog: electronState.showOpenDialog,
   },
   nativeTheme: {
     get shouldUseDarkColors() {
@@ -43,6 +47,19 @@ vi.mock("electron", () => ({
   shell: {
     openExternal: vi.fn(async () => undefined),
   },
+}));
+
+const preferencesState = vi.hoisted(() => ({
+  language: "en" as "en" | "pt-BR",
+  setTheme: vi.fn(),
+}));
+
+vi.mock("@/preferences/store", () => ({
+  getLanguagePreference: () => preferencesState.language,
+  setLanguagePreference: (language: "en" | "pt-BR") => {
+    preferencesState.language = language;
+  },
+  setThemePreference: preferencesState.setTheme,
 }));
 
 const state = vi.hoisted(() => ({ db: undefined as unknown }));
@@ -65,6 +82,13 @@ let serverPort: MessageChannel["port2"];
 beforeEach(() => {
   electronState.themeSource = "system";
   electronState.systemDark = false;
+  electronState.showOpenDialog.mockReset();
+  electronState.showOpenDialog.mockResolvedValue({
+    canceled: false,
+    filePaths: ["/tmp/picked.txt"],
+  });
+  preferencesState.language = "en";
+  preferencesState.setTheme.mockReset();
 
   sqlite = new Database(":memory:");
   const database: TestDatabase = drizzle({ client: sqlite, schema });
@@ -127,5 +151,53 @@ describe("production IPC router", () => {
     const theme = await client.theme.getCurrentThemeMode();
 
     expect(theme).toEqual({ dark: false, source: "system" });
+  });
+
+  it("serves and persists preferences over the wire", async () => {
+    await expect(client.preferences.getPreferences()).resolves.toEqual({
+      language: "en",
+      theme: "system",
+    });
+
+    await expect(
+      client.preferences.setLanguage({ language: "pt-BR" })
+    ).resolves.toEqual({ language: "pt-BR", theme: "system" });
+
+    await expect(client.preferences.getPreferences()).resolves.toEqual({
+      language: "pt-BR",
+      theme: "system",
+    });
+  });
+
+  it("persists theme changes made through the theme namespace", async () => {
+    await client.theme.setThemeMode({ mode: "dark" });
+
+    expect(preferencesState.setTheme).toHaveBeenCalledWith("dark");
+  });
+
+  it("serves the dialog namespace over the wire", async () => {
+    const window = {
+      close: vi.fn(),
+      isMaximized: vi.fn(() => false),
+      maximize: vi.fn(),
+      minimize: vi.fn(),
+      unmaximize: vi.fn(),
+    };
+
+    ipcContext.setMainWindow(
+      window as unknown as Parameters<typeof ipcContext.setMainWindow>[0]
+    );
+
+    await expect(client.dialog.openFile({ multiple: true })).resolves.toEqual({
+      canceled: false,
+      filePaths: ["/tmp/picked.txt"],
+    });
+
+    expect(electronState.showOpenDialog).toHaveBeenCalledWith(
+      window,
+      expect.objectContaining({
+        properties: ["openFile", "multiSelections"],
+      })
+    );
   });
 });

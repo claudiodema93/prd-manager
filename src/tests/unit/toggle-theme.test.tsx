@@ -21,7 +21,6 @@ vi.mock("@/ipc/manager", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  localStorage.clear();
   document.documentElement.classList.remove("dark");
 });
 

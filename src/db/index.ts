@@ -19,8 +19,8 @@ const SQLITE_HEADER = Buffer.from("SQLite format 3\0", "binary");
 const CACHE_APPLICATION_ID = 0x43_41_43_48;
 
 const DEFAULT_DATABASE_FILE = "cache.db";
-const DATABASE_PATH_ENV = "SAUGER_CACHE_DB_PATH";
-const SKIP_INTEGRITY_CHECK_ENV = "SAUGER_CACHE_SKIP_INTEGRITY_CHECK";
+const DATABASE_PATH_ENV = "APP_CACHE_DB_PATH";
+const SKIP_INTEGRITY_CHECK_ENV = "APP_CACHE_SKIP_INTEGRITY_CHECK";
 const MEMORY_DATABASE = ":memory:";
 const SIDECAR_SUFFIXES = ["-wal", "-shm", "-journal"] as const;
 

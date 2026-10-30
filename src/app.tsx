@@ -3,7 +3,7 @@ import React, { useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { useTranslation } from "react-i18next";
 import { updateAppLanguage } from "./actions/language";
-import { syncWithLocalTheme } from "./actions/theme";
+import { syncTheme } from "./actions/theme";
 import { router } from "./utils/routes";
 import "./localization/i18n";
 
@@ -13,10 +13,12 @@ export default function App() {
   useEffect(() => {
     // Theme synchronisation talks to the main process; surface failures instead
     // of leaving the effect with an unhandled rejection.
-    syncWithLocalTheme().catch((error: unknown) => {
+    syncTheme().catch((error: unknown) => {
       console.error("Failed to apply the stored theme:", error);
     });
-    updateAppLanguage(i18n);
+    updateAppLanguage(i18n).catch((error: unknown) => {
+      console.error("Failed to apply the stored language:", error);
+    });
   }, [i18n]);
 
   return <RouterProvider router={router} />;

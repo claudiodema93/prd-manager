@@ -1,4 +1,3 @@
-import { LOCAL_STORAGE_KEYS } from "@/constants";
 import { ipc } from "@/ipc/manager";
 import {
   THEME_SOURCES,
@@ -13,15 +12,16 @@ export interface ThemeState {
 
 const DARK_SCHEME_QUERY = "(prefers-color-scheme: dark)";
 
-// Mirrors the mode persisted in localStorage so the system-preference listener
-// can ignore operating-system changes while the user chose an explicit mode.
+// Mirrors the mode persisted in electron-store so the system-preference
+// listener can ignore operating-system changes while the user chose an
+// explicit mode.
 let storedMode: ThemeMode | null = null;
 let darkSchemeQuery: MediaQueryList | null = null;
 
 export async function setTheme(newTheme: ThemeMode): Promise<ThemeState> {
   const state = await ipc.client.theme.setThemeMode({ mode: newTheme });
 
-  persistThemeMode(newTheme);
+  rememberThemeMode(newTheme);
   applyThemeState(state);
 
   return state;
@@ -31,33 +31,33 @@ export async function toggleTheme(): Promise<ThemeState> {
   const state = await ipc.client.theme.toggleThemeMode();
 
   // Toggling always produces an explicit source, never `system`.
-  persistThemeMode(state.source);
+  rememberThemeMode(state.source);
   applyThemeState(state);
 
   return state;
 }
 
-export function syncWithLocalTheme(): Promise<ThemeState> {
-  const local = readStoredMode();
+export async function syncTheme(): Promise<ThemeState> {
+  // The main process already restored the stored theme before the window was
+  // created, so the renderer only mirrors that state onto the document.
+  const state = await ipc.client.theme.getCurrentThemeMode();
 
-  // An absent or unrecognised value falls back to following the OS, so a dark
-  // system is rendered dark on first launch instead of always starting light.
-  return setTheme(local ?? "system");
-}
+  rememberThemeMode(state.source);
+  applyThemeState(state);
 
-function readStoredMode(): ThemeMode | null {
-  const value = localStorage.getItem(LOCAL_STORAGE_KEYS.THEME);
-
-  return value !== null && isThemeMode(value) ? value : null;
+  return state;
 }
 
 function isThemeMode(value: string): value is ThemeMode {
   return (THEME_SOURCES as readonly string[]).includes(value);
 }
 
-function persistThemeMode(mode: ThemeMode) {
+function rememberThemeMode(mode: ThemeMode) {
+  if (!isThemeMode(mode)) {
+    return;
+  }
+
   storedMode = mode;
-  localStorage.setItem(LOCAL_STORAGE_KEYS.THEME, mode);
 }
 
 function applyThemeState(state: ThemeState) {

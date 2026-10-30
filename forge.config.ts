@@ -35,9 +35,9 @@ function getPrebuildsFor(platform: string, arch: string): string[] {
 /*
  * Playwright attaches to the packaged app's main process through the Node
  * inspector (`--inspect`), which the hardened fuse disables. E2E builds opt
- * in with SAUGER_E2E=1; release builds keep the fuse disabled.
+ * in with APP_E2E=1; release builds keep the fuse disabled.
  */
-const isE2EBuild = process.env.SAUGER_E2E === "1";
+const isE2EBuild = process.env.APP_E2E === "1";
 
 const config: ForgeConfig = {
   hooks: {

@@ -12,7 +12,12 @@ export default function ToggleTheme() {
   }
 
   return (
-    <Button onClick={handleToggle} size="icon">
+    <Button
+      aria-label="Toggle theme"
+      onClick={handleToggle}
+      size="icon"
+      title="Toggle theme"
+    >
       <Moon size={16} />
     </Button>
   );

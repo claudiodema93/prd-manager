@@ -34,7 +34,7 @@ Node 26.13.0 (see `.nvmrc`), npm.
 | Re-add shadcn components present in `src/components/ui` | `npm run bump-ui` |
 
 E2E tests run against the **packaged** app, not stock Electron: `test:e2e:build` runs
-`SAUGER_E2E=1 electron-forge package` because Playwright attaches to the main process through
+`APP_E2E=1 electron-forge package` because Playwright attaches to the main process through
 `--inspect`, which the production fuse disables.
 
 ## Architecture
@@ -45,17 +45,20 @@ The renderer has no Node access at all.
 ```
 main.ts ──(ipcMain MessagePort upgrade)── preload.ts ──(window.postMessage)── ipc/manager.ts
    │                                                                            │
-   ├── ipc/router.ts → namespaces (app, customers, shell, theme, window)    ipc.client
+   ├── ipc/router.ts → namespaces (app, customers, dialog, preferences,
+   │                    shell, theme, window)                             ipc.client
    │        handlers.ts (os procedures) + schemas.ts (zod in/out)
-   └── db/ (better-sqlite3 + Drizzle)
+   └── db/ (better-sqlite3 + Drizzle) · preferences/ (electron-store)
 ```
 
 **Main process** (`src/main.ts`): single-instance lock; `hardenSession()` denies every web
-permission and download; the database is initialised *before* the window and the oRPC listener is
-registered *before* `createWindow()` (the renderer posts its MessagePort while evaluating its
-bundle); the window stays hidden until `ready-to-show`; `window.open`, navigation, redirects and
-subframe navigation away from the app are blocked. `isDevelopment` is `!app.isPackaged` on
-purpose — Forge does not set `NODE_ENV`.
+permission and download; preferences are initialised and the stored theme applied *before* the
+window, the database is initialised *before* the window, and the oRPC listener is registered
+*before* `createWindow()` (the renderer posts its MessagePort while evaluating its bundle). The
+window stays hidden until `ready-to-show`; a saved maximized state is restored there, because
+`maximize()` shows the window. `window.open`, navigation, redirects and subframe navigation away
+from the app are blocked. `isDevelopment` is `!app.isPackaged` on purpose — Forge does not set
+`NODE_ENV`.
 
 **Preload** (`src/preload.ts`) only forwards the `MessagePort` from the renderer's
 `window.postMessage` to `ipcRenderer.postMessage`. It runs under `sandbox: true` with
@@ -90,8 +93,8 @@ Window-scoped procedures use the `os.use(ipcContext.mainWindowContext)` middlewa
 `src/db/index.ts` owns a disposable SQLite **cache** in Electron's `userData` (`cache.db`) using
 better-sqlite3 + Drizzle, with migrations applied on startup.
 
-- `SAUGER_CACHE_DB_PATH` overrides the file (must be absolute, or `:memory:` in tests);
-  `SAUGER_CACHE_SKIP_INTEGRITY_CHECK=1` skips the dev-only `quick_check`.
+- `APP_CACHE_DB_PATH` overrides the file (must be absolute, or `:memory:` in tests);
+  `APP_CACHE_SKIP_INTEGRITY_CHECK=1` skips the dev-only `quick_check`.
 - The safety rules here are load-bearing, not incidental: an `application_id` sentinel
   (`0x43414348`, "CACH") proves ownership, a non-SQLite header / symlink / hard link / foreign
   database is refused without modifying the file, corruption resets in place or moves the file
@@ -106,6 +109,31 @@ better-sqlite3 + Drizzle, with migrations applied on startup.
 - CI fails on schema drift: after changing the schema, run `npm run db:generate` and commit
   `drizzle/` (snapshots included).
 
+### Preferences
+
+`src/preferences/` wraps electron-store in the main process for the three user
+preferences: theme, language and window state (`preferences.json` in `userData`). The
+package is ESM-only and is bundled into the CJS main bundle; keep it in `dependencies`
+but never import it from the renderer.
+
+- `src/preferences/schema.ts` holds the zod schemas used by the IPC layer and the JSON
+  Schema electron-store validates against.
+- `src/preferences/store.ts` initialises after `app.whenReady()` and degrades to defaults
+  when the file cannot be read. `APP_PREFERENCES_DIR` overrides the directory (must be
+  absolute; used by e2e).
+- Theme is applied to `nativeTheme.themeSource` before the window is created and persisted
+  by the theme handlers. Language is exposed through the `preferences` oRPC namespace.
+  Window bounds are restored in `createWindow` and saved on a debounce from
+  `resize`/`move`, plus `maximize`, `unmaximize` and `close`.
+
+### Dialogs
+
+`src/ipc/dialog/` wraps `dialog.showOpenDialog` in the main process, parented to the main window.
+`dialog.openFile` accepts `title`, `defaultPath`, `buttonLabel`, `filters`, `multiple` and
+`showHiddenFiles`; `dialog.openDirectory` accepts the same without `filters`. Filter extensions
+are normalised (`.png`/`*.png` → `png`), and the raw Electron `properties` array is not exposed.
+Both procedures return `{ canceled, filePaths }`. Native dialogs are not e2e-tested.
+
 ### Build and packaging
 
 Electron Forge with the Vite plugin and three configs: `vite.main.config.mts`,
@@ -114,7 +142,7 @@ React Compiler via Babel). `@` aliases to `src` in `tsconfig.json` and in every 
 keep them in sync. `better-sqlite3` is externalised from the main bundle and re-added in Forge's
 `packageAfterCopy` hook (per-platform prebuilds; `linuxmusl` too), because the Vite plugin only
 copies `.vite` output. Fuses disable `RunAsNode`, `NODE_OPTIONS` and CLI inspect — except
-`EnableNodeCliInspectArguments`, which stays on only for `SAUGER_E2E=1` builds. The renderer's CSP
+`EnableNodeCliInspectArguments`, which stays on only for `APP_E2E=1` builds. The renderer's CSP
 is in `index.html`.
 
 ### Tests and CI
@@ -126,11 +154,12 @@ is in `index.html`.
   excluded.
 - Playwright: `src/tests/e2e`, `workers: 1` (the app holds a single-instance lock), launches the
   packaged executable via `electron-playwright-helpers`. `helpers.ts` allows only an env allowlist
-  into the app and redirects `HOME`/`APPDATA`/`XDG_CONFIG_HOME` to a per-test temp dir; it forwards
-  `XAUTHORITY` so Electron can authenticate with `xvfb-run` on Linux CI.
+  into the app and redirects `HOME`/`APPDATA`/`XDG_CONFIG_HOME` to a per-test temp dir; it also
+  points `APP_PREFERENCES_DIR` at that temp dir and forwards `XAUTHORITY` so Electron can
+  authenticate with `xvfb-run` on Linux CI.
 - Workflows: `check.yaml` (`npm audit --omit=dev`, typecheck, `ultracite check`, `drizzle-kit
   check`, schema-drift check), `testing.yaml` (unit coverage; e2e under xvfb), `publish.yaml`
-  (manual dispatch on a Windows runner, refuses `SAUGER_E2E` builds, creates a **draft** GitHub
+  (manual dispatch on a Windows runner, refuses `APP_E2E` builds, creates a **draft** GitHub
   release). Auto-update reads releases from `claudiodema93/prd-manager`.
 
 ### Theme and localization

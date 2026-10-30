@@ -34,7 +34,7 @@ jobs:
 
       - name: Refuse to publish an E2E build
         shell: bash
-        run: test -z "${SAUGER_E2E:-}"
+        run: test -z "${APP_E2E:-}"
 
       - name: Typecheck
         run: npm run typecheck

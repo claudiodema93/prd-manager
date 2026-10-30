@@ -17,7 +17,7 @@ import { findLatestBuild, parseElectronApp } from "electron-playwright-helpers";
  */
 
 const PRODUCT_NAME = "PrdManager";
-const PACKAGE_COMMAND = "SAUGER_E2E=1 npm run package";
+const PACKAGE_COMMAND = "APP_E2E=1 npm run package";
 
 /**
  * Environment variables the packaged app may inherit. Anything else in the
@@ -113,7 +113,7 @@ function resolveExecutable(): string {
 }
 
 export function createTempCacheDir(): { dbPath: string; tempDir: string } {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "sauger-e2e-"));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "app-e2e-"));
 
   return { dbPath: path.join(tempDir, "cache.db"), tempDir };
 }
@@ -125,7 +125,9 @@ export function launchPackagedApp(
   return electron.launch({
     env: {
       ...getProcessEnv(homeDir),
-      SAUGER_CACHE_DB_PATH: dbPath,
+      APP_CACHE_DB_PATH: dbPath,
+      // Keep preferences out of the developer's real userData directory.
+      APP_PREFERENCES_DIR: path.join(homeDir, "preferences"),
     },
     executablePath: resolveExecutable(),
   });

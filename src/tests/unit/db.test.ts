@@ -31,8 +31,8 @@ vi.mock("electron", () => ({
 const TEST_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(TEST_DIRECTORY, "../../..");
 const CACHE_APPLICATION_ID = 0x43_41_43_48;
-const DATABASE_PATH_ENV = "SAUGER_CACHE_DB_PATH";
-const SKIP_INTEGRITY_CHECK_ENV = "SAUGER_CACHE_SKIP_INTEGRITY_CHECK";
+const DATABASE_PATH_ENV = "APP_CACHE_DB_PATH";
+const SKIP_INTEGRITY_CHECK_ENV = "APP_CACHE_SKIP_INTEGRITY_CHECK";
 
 const NOT_INITIALISED_PATTERN = /not been initialised/iu;
 const ABSOLUTE_PATH_PATTERN = /absolute path/iu;
@@ -178,7 +178,7 @@ function copyMigrations(base: string): void {
 beforeEach(() => {
   vi.resetModules();
   dbModule = undefined;
-  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "sauger-db-test-"));
+  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "app-db-test-"));
   electronState.appPath = PROJECT_ROOT;
   electronState.isPackaged = false;
   electronState.userData = path.join(tempDir, "userData");
