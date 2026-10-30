@@ -34,7 +34,7 @@ function HomePage() {
           <h1 className="font-mono text-4xl font-bold">{t("appName")}</h1>
           <p className="text-muted-foreground text-sm">v{appVersion}</p>
         </span>
-        <div className="flex w-full justify-between">
+        <div className="flex w-full">
           <ExternalLink
             className="text-muted-foreground flex gap-2 text-sm"
             href="https://github.com/claudiodema93"

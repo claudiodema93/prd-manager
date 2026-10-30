@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appVersion, currentPlatfom } from "@/ipc/app/handlers";
 import { ipcContext } from "@/ipc/context";
 import { logRpcError } from "@/ipc/handler";
-import { getPreferences, setLanguage } from "@/ipc/preferences/handlers";
+import {
+  getPreferences,
+  setLanguage,
+  setSidebarOpen,
+} from "@/ipc/preferences/handlers";
 import { openExternalLink } from "@/ipc/shell/handlers";
 import {
   getCurrentThemeMode,
@@ -33,12 +37,17 @@ const electronState = vi.hoisted(() => ({
 const preferencesState = vi.hoisted(() => ({
   language: "en" as "en" | "pt-BR",
   setTheme: vi.fn(),
+  sidebarOpen: true,
 }));
 
 vi.mock("@/preferences/store", () => ({
   getLanguagePreference: () => preferencesState.language,
+  getSidebarOpenPreference: () => preferencesState.sidebarOpen,
   setLanguagePreference: (language: "en" | "pt-BR") => {
     preferencesState.language = language;
+  },
+  setSidebarOpenPreference: (open: boolean) => {
+    preferencesState.sidebarOpen = open;
   },
   setThemePreference: preferencesState.setTheme,
 }));
@@ -207,6 +216,7 @@ describe("preferences handlers", () => {
 
     await expect(call(getPreferences, undefined)).resolves.toEqual({
       language: "pt-BR",
+      sidebarOpen: true,
       theme: "dark",
     });
   });
@@ -214,10 +224,21 @@ describe("preferences handlers", () => {
   it("persists a supported language", async () => {
     await expect(call(setLanguage, { language: "pt-BR" })).resolves.toEqual({
       language: "pt-BR",
+      sidebarOpen: true,
       theme: "system",
     });
 
     expect(preferencesState.language).toBe("pt-BR");
+  });
+
+  it("persists the sidebar state", async () => {
+    await expect(call(setSidebarOpen, { open: false })).resolves.toEqual({
+      language: "en",
+      sidebarOpen: false,
+      theme: "system",
+    });
+
+    expect(preferencesState.sidebarOpen).toBe(false);
   });
 
   it("rejects an unsupported language without persisting it", async () => {

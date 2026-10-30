@@ -43,12 +43,14 @@ describe("preferences schemas", () => {
     expect(
       getPreferencesOutputSchema.safeParse({
         language: "pt-BR",
+        sidebarOpen: true,
         theme: "dark",
       }).success
     ).toBe(true);
     expect(
       getPreferencesOutputSchema.safeParse({
         language: "en",
+        sidebarOpen: true,
         theme: "purple",
       }).success
     ).toBe(false);

@@ -201,6 +201,10 @@ export function getWindowState(): WindowState {
   return getPreferences().window;
 }
 
+export function getSidebarOpenPreference(): boolean {
+  return getPreferences().sidebarOpen;
+}
+
 /**
  * A failed write must never reject the IPC call that triggered it: the theme
  * or language has already been applied in memory, and the renderer should
@@ -224,6 +228,10 @@ export function setThemePreference(theme: ThemeSource): void {
 
 export function setLanguagePreference(language: LanguageKey): void {
   writePreference((current) => current.set("language", language));
+}
+
+export function setSidebarOpenPreference(open: boolean): void {
+  writePreference((current) => current.set("sidebarOpen", open));
 }
 
 export function setWindowState(window: WindowState): void {

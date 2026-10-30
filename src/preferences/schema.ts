@@ -19,6 +19,7 @@ export interface WindowState {
 
 export interface AppPreferences {
   language: LanguageKey;
+  sidebarOpen: boolean;
   theme: ThemeSource;
   window: WindowState;
 }
@@ -31,6 +32,7 @@ export const DEFAULT_WINDOW_STATE: WindowState = {
 
 export const DEFAULT_APP_PREFERENCES: AppPreferences = {
   language: "en",
+  sidebarOpen: true,
   theme: "system",
   window: DEFAULT_WINDOW_STATE,
 };
@@ -57,6 +59,7 @@ export const windowStateSchema = z.object({
 
 export const appPreferencesSchema = z.object({
   language: z.enum(LANGUAGE_KEYS),
+  sidebarOpen: z.boolean(),
   theme: z.enum(THEME_SOURCES),
   window: windowStateSchema,
 });
@@ -72,6 +75,10 @@ export const PREFERENCES_JSON_SCHEMA: Schema<AppPreferences> = {
     default: DEFAULT_APP_PREFERENCES.language,
     enum: [...LANGUAGE_KEYS],
     type: "string",
+  },
+  sidebarOpen: {
+    default: DEFAULT_APP_PREFERENCES.sidebarOpen,
+    type: "boolean",
   },
   theme: {
     default: DEFAULT_APP_PREFERENCES.theme,

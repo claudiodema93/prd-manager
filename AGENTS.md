@@ -99,7 +99,7 @@ extensions are normalised (`.png`/`*.png` → `png`). The renderer calls
 in `localization/i18n.ts` (and the language to `langs.ts`). Theme is three-state
 and owned by `nativeTheme` in main; the renderer mirrors `.dark` and follows
 `matchMedia` in `system` mode — go through `actions/theme.ts`. Use `cn()` from
-`utils/tailwind.ts` for conditional classes.
+the `cn` package (re-exported by `utils/cn.ts`) for conditional classes.
 
 ## Gotchas
 

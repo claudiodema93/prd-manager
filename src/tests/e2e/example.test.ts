@@ -50,6 +50,42 @@ test("renders the first page", async () => {
   });
 });
 
+/*
+ * Runs before the navigation-blocking test below: a blocked `window.location`
+ * assignment leaves the renderer with a navigation Playwright keeps waiting
+ * for, which makes any later locator assertion time out.
+ */
+test("navigates with the sidebar and marks the active route", async () => {
+  const page: Page = await electronApp.firstWindow();
+
+  const homeLink = page.getByRole("link", { name: "Home Page" });
+  const secondLink = page.getByRole("link", { name: "Second Page" });
+
+  await expect(homeLink).toBeVisible();
+  await expect(secondLink).toBeVisible();
+  // Documentation goes through ExternalLink, which renders a button rather
+  // than an anchor because it hands the URL to the main process.
+  await expect(
+    page.getByRole("button", { name: "Documentation" })
+  ).toBeVisible();
+
+  await expect(homeLink).toHaveAttribute("data-active", "true");
+  await expect(homeLink).toHaveAttribute("aria-current", "page");
+  await expect(secondLink).toHaveAttribute("data-active", "false");
+
+  await secondLink.click();
+
+  await expect(page.locator("header h1")).toHaveText("Second Page");
+  await expect(secondLink).toHaveAttribute("data-active", "true");
+  await expect(secondLink).toHaveAttribute("aria-current", "page");
+  await expect(homeLink).toHaveAttribute("data-active", "false");
+
+  // Leave the app on the home route for the tests that run after this one.
+  await homeLink.click();
+
+  await expect(page.locator("header h1")).toHaveText("Home Page");
+});
+
 test("exchanges data with the main process over the sandboxed IPC bridge", async () => {
   const page: Page = await electronApp.firstWindow();
   const version = await electronApp.evaluate(({ app }) => app.getVersion());
