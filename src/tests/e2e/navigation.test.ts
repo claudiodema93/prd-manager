@@ -1,6 +1,7 @@
 import type { ElectronApplication, Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 import {
+  closePackagedApp,
   createTempCacheDir,
   launchPackagedApp,
   removeTempDir,
@@ -27,27 +28,9 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  const app = electronApp;
-
-  if (!app) {
-    return;
-  }
-
-  // The blocked navigation can leave graceful shutdown waiting, so bound it
-  // and force the process down instead of failing the hook after 30s.
-  await Promise.race([
-    app.close().catch(() => undefined),
-    new Promise<void>((resolve) => {
-      setTimeout(resolve, 5000);
-    }),
-  ]);
-
-  try {
-    app.process().kill();
-  } catch {
-    // Already exited.
-  }
-
+  // The blocked navigation can leave graceful shutdown waiting; the helper
+  // bounds the close and forces the process down instead of failing the hook.
+  await closePackagedApp(electronApp);
   removeTempDir(tempDir);
 });
 

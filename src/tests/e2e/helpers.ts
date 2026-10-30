@@ -138,3 +138,40 @@ export function launchPackagedApp(
 export function removeTempDir(tempDir: string): void {
   fs.rmSync(tempDir, { force: true, recursive: true });
 }
+
+const APP_CLOSE_TIMEOUT_MS = 5000;
+
+/**
+ * Closes a packaged app without waiting forever. On macOS the app stays alive
+ * after its last window closes (the platform convention), so Playwright's
+ * `close()` can otherwise reach the 30 s hook timeout and fail an otherwise
+ * green test file.
+ */
+export async function closePackagedApp(
+  app: ElectronApplication | undefined
+): Promise<void> {
+  if (!app) {
+    return;
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    await Promise.race([
+      app.close().catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, APP_CLOSE_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+
+  try {
+    app.process().kill();
+  } catch {
+    // Already exited.
+  }
+}
