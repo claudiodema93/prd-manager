@@ -269,6 +269,55 @@ export async function readJsonFile(
   }
 }
 
+/**
+ * Replaces `targetPath` with `tempPath`. Windows can refuse to `rename` onto an
+ * existing file (`EPERM`/`EEXIST`), so the target is moved aside as a backup
+ * first and deleted only once the replacement is in place. The target is never
+ * removed before the swap: if the replacement fails, the backup is restored, so
+ * a failed write loses neither the previous nor the new file.
+ */
+async function replaceFile(
+  tempPath: string,
+  targetPath: string
+): Promise<void> {
+  try {
+    await rename(tempPath, targetPath);
+
+    return;
+  } catch (error) {
+    if (!isErrno(error, "EEXIST", "EPERM")) {
+      throw error;
+    }
+  }
+
+  const backupPath = `${targetPath}.bak-${process.pid}-${randomUUID()}`;
+  let backedUp = false;
+
+  try {
+    await rename(targetPath, backupPath);
+    backedUp = true;
+  } catch (error) {
+    // ENOENT: the target vanished after the failed rename; nothing to preserve.
+    if (!isErrno(error, "ENOENT")) {
+      throw error;
+    }
+  }
+
+  try {
+    await rename(tempPath, targetPath);
+  } catch (error) {
+    if (backedUp) {
+      await rename(backupPath, targetPath).catch(() => undefined);
+    }
+
+    throw error;
+  }
+
+  if (backedUp) {
+    await rm(backupPath, { force: true }).catch(() => undefined);
+  }
+}
+
 export async function writeJsonAtomic(
   filePath: string,
   value: unknown
@@ -287,18 +336,7 @@ export async function writeJsonAtomic(
     // `wx` (O_CREAT | O_EXCL) refuses to overwrite an existing path, including
     // a symlink planted at the unpredictable temp name.
     await writeFile(tempPath, contents, { flag: "wx", mode: 0o600 });
-
-    try {
-      await rename(tempPath, resolved);
-    } catch (error) {
-      // Windows refuses to replace an existing file with `rename`.
-      if (!isErrno(error, "EEXIST", "EPERM")) {
-        throw error;
-      }
-
-      await rm(resolved, { force: true });
-      await rename(tempPath, resolved);
-    }
+    await replaceFile(tempPath, resolved);
   } catch (error) {
     await rm(tempPath, { force: true }).catch(() => undefined);
 
@@ -698,6 +736,13 @@ export async function moveCustomerToTrash(input: {
     throw new CustomerServiceError(
       "CUSTOMER_FOLDER_NOT_DIRECTORY",
       `Customer folder "${sourcePath}" is not a directory.`
+    );
+  }
+
+  if (path.basename(sourcePath) !== folderName) {
+    throw new CustomerServiceError(
+      "CUSTOMER_FOLDER_NAME_INVALID",
+      `Customer folder path "${sourcePath}" does not match the folder name "${folderName}".`
     );
   }
 

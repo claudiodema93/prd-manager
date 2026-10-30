@@ -10,7 +10,7 @@
  */
 
 import type { Dirent } from "node:fs";
-import { mkdir, readdir, rm } from "node:fs/promises";
+import { mkdir, readdir, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import {
   CUSTOMER_CONFIG_SCHEMA_VERSION,
@@ -53,12 +53,19 @@ const MAX_CUSTOMER_NAME_LENGTH = 256;
 const FIRST_CUSTOMER_CODE = 1;
 const LAST_CUSTOMER_CODE = 9999;
 
-/** Config errors that only mean "there is no usable config yet". */
+/**
+ * Config errors that only mean "there is no usable config yet". A version the
+ * app does not support (for example one written by a newer release) is
+ * repairable too, but only while the customer has no articles: otherwise the
+ * key lock must be enforced against the authoritative file.
+ */
 const MISSING_CONFIG_ERROR_CODES: ReadonlySet<string> = new Set([
   "CONFIG_INVALID",
   "CONFIG_INVALID_JSON",
   "CONFIG_MISSING",
   "CONFIG_UNREADABLE",
+  "CONFIG_UNSUPPORTED_VERSION",
+  "CONFIG_VERSION_CONFLICT",
 ]);
 
 export interface CustomerServiceContext {
@@ -658,7 +665,19 @@ export function removeCustomer(
 
     // A trash inside the articles root would leave the deleted customer folder
     // under the root, where the next scan reports it as an unexpected entry.
-    if (isPathInside(root, path.resolve(context.trashDirectory))) {
+    // Compare real paths: a symlinked intermediate component must not smuggle
+    // the trash back underneath the root.
+    const trashDirectory = path.resolve(context.trashDirectory);
+    const [realRoot, realTrash] = await Promise.all([
+      realpath(root).catch(() => null),
+      realpath(trashDirectory).catch(() => null),
+    ]);
+
+    if (
+      realRoot !== null &&
+      realTrash !== null &&
+      isPathInside(realRoot, realTrash)
+    ) {
       throw new CustomerServiceError(
         "INVALID_OPERATION",
         "The trash directory must be outside the articles directory."
@@ -668,7 +687,7 @@ export function removeCustomer(
     await moveCustomerToTrash({
       folderName: parsed.folderName,
       sourceFolderPath: folderPath,
-      trashDirectory: context.trashDirectory,
+      trashDirectory,
     });
 
     // The folder was the source of truth; a missing cache row is not an error.

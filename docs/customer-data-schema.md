@@ -64,9 +64,11 @@ symlink, an oversized file, or a value failing the rules above produces an
 `ARTICLE_INVALID` warning; that folder is **not** counted. Symlinked article
 folders produce `ARTICLE_SYMLINK` and are ignored.
 
-At most 100 issues are kept per customer and 200 per scan. The last slot is
-reserved for a truncation warning (the scan-level note reuses
-`ENTRY_UNEXPECTED`).
+At most 100 issues are kept per customer and 200 per scan. The last slot of
+each list is reserved for a truncation warning: the per-customer note uses
+`ARTICLE_INVALID`, the scan-level note reuses `ENTRY_UNEXPECTED`. Issues are
+capped while they are collected, so an oversized list is never materialised in
+full.
 
 ## `customer_data.json` v1
 
@@ -226,7 +228,7 @@ unmounted folder.
 | `CONFIG_INVALID_JSON` | error | The file is not valid JSON. |
 | `ARTICLE_INVALID` | warning | An article folder is missing/invalid `article_data.json`; not counted. |
 | `ARTICLE_SYMLINK` | warning | An article entry is a symlink; ignored. |
-| `ENTRY_UNEXPECTED` | warning | A `customer-*` name is not a valid customer folder, or a list was truncated. |
+| `ENTRY_UNEXPECTED` | warning | A `customer-*` name is not a valid customer folder, or the scan-level issue list was truncated. |
 | `FOLDER_SYMLINK` | error | The customer entry is a symlink; not followed. |
 | `FOLDER_NOT_DIRECTORY` | error | The customer entry is not a directory. |
 | `FOLDER_UNREADABLE` | error | The customer entry cannot be inspected (permission/I/O error); the scan continues with the other customers. |
@@ -268,8 +270,10 @@ the UI can show the folder contents.
     (`removed`). The cache is single-root, so rows left behind by a previous
     `articlesDirectory` are removed too. Nothing is deleted when the root
     cannot be enumerated.
-- All cache reads (`listCustomers`, `getCustomer`) see the last successful
-  scan. `clearCustomers` empties the cache only; the next scan restores it.
+- Cache reads (`listCustomers`, `getCustomer`) do not take the customer lock:
+  a scan updates rows incrementally, so a read issued while a scan is running
+  can observe a partially reconciled snapshot until that scan completes.
+  `clearCustomers` empties the cache only; the next scan restores it.
   Changing `articlesDirectory` in the preferences also empties the cache, so
   customers from the old root cannot linger in the list.
 - To keep a hostile or misconfigured root from holding the customer lock
@@ -285,8 +289,8 @@ themselves.
 
 | Operation | Semantics |
 | --- | --- |
-| `createCustomer` | Requires an existing, real `articlesDirectory`. Accepts `name`, `article`, `revision` and optional `customerCode`. Without a code, the lowest free `0001`–`9999` is chosen. Creates the folder and writes `customer_data.json` atomically; removes the folder if the write fails. |
-| `updateCustomer` | Requires a real customer folder inside the root. Accepts any of `name`, `article`, `revision`. A missing/invalid config is repairable only when there are no articles and all three sections are supplied. |
+| `createCustomer` | Requires an existing, real `articlesDirectory`. Accepts `name`, `article`, `revision` and optional `customerCode`. Without a code, the lowest free `0001`–`9999` is chosen. Creates the folder and writes `customer_data.json` atomically (temp file plus rename, with a backup of the previous file on platforms that refuse to replace it); removes the folder if the write fails. |
+| `updateCustomer` | Requires a real customer folder inside the root. Accepts any of `name`, `article`, `revision`. A missing, invalid or unsupported-version config is repairable only when there are no articles and all three sections are supplied; with articles the real `CONFIG_*` error is propagated so the key lock keeps working against the authoritative file. |
 | `removeCustomer` | Refuses when `articleCount > 0`. Requires `trashDirectory`; moves the folder there and deletes the cache row. |
 | `clearCustomers` | Deletes every cache row only. |
 
@@ -298,11 +302,13 @@ Guards:
   `revision.key` is refused. Other parameters remain editable.
 - **Trash mandatory:** deleting without a configured, existing, non-symlink
   trash directory fails; the folder is never deleted in place. The trash
-  directory must be outside `articlesDirectory`.
+  directory must resolve (real path, so symlinked intermediate components are
+  followed) outside `articlesDirectory`.
 - **Trash move:** a rename is attempted first; on a cross-device error the
-  folder is copied then the source removed. A name collision in the trash is
-  resolved with a timestamp and then numeric suffixes. A trash directory nested
-  inside the source is refused.
+  folder is copied then the source removed — if the copy succeeds but removing
+  the source fails, the error is reported and neither copy is lost. A name
+  collision in the trash is resolved with a timestamp and then numeric
+  suffixes. A trash directory nested inside the source is refused.
 - **Path confinement:** every caller-supplied `folderPath` must be a direct
   child of `articlesDirectory` (this also rejects a path that reaches the root
   through a symlinked intermediate directory), be NUL-free, and name a

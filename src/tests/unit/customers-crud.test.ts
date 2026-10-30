@@ -5,7 +5,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CUSTOMER_CONFIG_SCHEMA_VERSION } from "@/customers/config";
 import {
   type CustomerServiceContext,
@@ -21,6 +21,27 @@ import {
 } from "@/customers/store";
 import type { CustomerSectionDefinition } from "@/customers/types";
 import { customers } from "@/db/schema";
+
+/**
+ * Lets one test simulate a failure between `mkdir` and the config write, which
+ * is the only way to exercise the create rollback on a healthy filesystem.
+ */
+const folderControl = vi.hoisted(() => ({ failWrite: false }));
+
+vi.mock("@/customers/folder", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/customers/folder")>();
+
+  return {
+    ...actual,
+    writeJsonAtomic: async (filePath: string, value: unknown) => {
+      if (folderControl.failWrite) {
+        throw new Error("simulated write failure");
+      }
+
+      await actual.writeJsonAtomic(filePath, value);
+    },
+  };
+});
 
 const CONFIG_FILE = "customer_data.json";
 const ARTICLE_FILE = "article_data.json";
@@ -61,6 +82,7 @@ let database: TestDatabase;
 let context: CustomerServiceContext;
 
 beforeEach(async () => {
+  folderControl.failWrite = false;
   tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "customers-crud-"));
   root = path.join(tempDir, "customers");
   trash = path.join(tempDir, "trash");
@@ -254,6 +276,19 @@ describe("createCustomer", () => {
     });
   });
 
+  it("removes the new folder when the config write fails", async () => {
+    folderControl.failWrite = true;
+
+    try {
+      await expect(createDefault()).rejects.toThrow("simulated write failure");
+    } finally {
+      folderControl.failWrite = false;
+    }
+
+    expect(await pathExists(customerFolder("0001"))).toBe(false);
+    expect(getCustomerRow(database, customerFolder("0001"))).toBeNull();
+  });
+
   it("rejects an empty or oversized customer name", async () => {
     await expect(createDefault({ name: "   " })).rejects.toMatchObject({
       code: "CUSTOMER_NAME_INVALID",
@@ -408,6 +443,28 @@ describe("updateCustomer", () => {
     expect((await readConfigFile(created.folderPath)).article).toMatchObject({
       key: "FIX-{NUM:0000}",
     });
+  });
+
+  it("repairs a config with an unsupported schema version when there are no articles", async () => {
+    const created = await createDefault();
+    const config = await readConfigFile(created.folderPath);
+
+    await fs.writeFile(
+      path.join(created.folderPath, CONFIG_FILE),
+      JSON.stringify({ ...config, schemaVersion: 2 })
+    );
+
+    const updated = await updateCustomer(context, {
+      article: makeArticle(),
+      folderPath: created.folderPath,
+      name: "Upgraded",
+      revision: makeRevision(),
+    });
+
+    expect(updated.name).toBe("Upgraded");
+    expect((await readConfigFile(created.folderPath)).schemaVersion).toBe(
+      CUSTOMER_CONFIG_SCHEMA_VERSION
+    );
   });
 
   it("requires full input to repair a missing config", async () => {
@@ -569,6 +626,24 @@ describe("removeCustomer", () => {
       removeCustomer(context, { folderPath: path.join(tempDir, "elsewhere") })
     ).rejects.toMatchObject({ code: "INVALID_OPERATION" });
   });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a trash directory that resolves inside the articles directory through a symlink",
+    async () => {
+      const created = await createDefault();
+      const insideTrash = path.join(root, "internal-trash", "nested");
+      const link = path.join(tempDir, "trash-link");
+
+      await fs.mkdir(insideTrash, { recursive: true });
+      await fs.symlink(path.join(root, "internal-trash"), link, "dir");
+      context = { ...context, trashDirectory: path.join(link, "nested") };
+
+      await expect(
+        removeCustomer(context, { folderPath: created.folderPath })
+      ).rejects.toMatchObject({ code: "INVALID_OPERATION" });
+      expect(await pathExists(created.folderPath)).toBe(true);
+    }
+  );
 });
 
 describe("path safety", () => {

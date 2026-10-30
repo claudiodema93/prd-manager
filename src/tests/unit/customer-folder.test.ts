@@ -2,7 +2,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   countValidArticles,
   customerFolderNameForCode,
@@ -14,6 +14,60 @@ import {
   writeJsonAtomic,
 } from "@/customers/folder";
 
+/**
+ * `rename`/`rm` failures are injected per call so the Windows replace fallback
+ * and the cross-device trash fallback can be exercised deterministically on
+ * every platform. Everything else delegates to the real implementation.
+ */
+const fsControl = vi.hoisted(() => ({
+  failRenameAt: new Map<number, string>(),
+  failRmAt: new Map<number, string>(),
+  renameCalls: 0,
+  rmCalls: 0,
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+
+  const errno = (operation: string, code: string): NodeJS.ErrnoException =>
+    Object.assign(new Error(`mock ${operation} failure (${code})`), { code });
+
+  return {
+    ...actual,
+    rename: async (from: string, to: string) => {
+      fsControl.renameCalls += 1;
+
+      const code = fsControl.failRenameAt.get(fsControl.renameCalls);
+
+      if (code === undefined) {
+        await actual.rename(from, to);
+
+        return;
+      }
+
+      fsControl.failRenameAt.delete(fsControl.renameCalls);
+      throw errno("rename", code);
+    },
+    rm: async (
+      target: string,
+      options?: { force?: boolean; recursive?: boolean }
+    ) => {
+      fsControl.rmCalls += 1;
+
+      const code = fsControl.failRmAt.get(fsControl.rmCalls);
+
+      if (code === undefined) {
+        await actual.rm(target, options);
+
+        return;
+      }
+
+      fsControl.failRmAt.delete(fsControl.rmCalls);
+      throw errno("rm", code);
+    },
+  };
+});
+
 const CUSTOMER_CODE = "0001";
 const FOLDER_NAME = "customer-0001";
 const ARTICLE_FILE = "article_data.json";
@@ -24,6 +78,10 @@ const TRASH_SUFFIX_PATTERN = /-\d+(?:-\d+)?$/u;
 let tempDir: string;
 
 beforeEach(async () => {
+  fsControl.renameCalls = 0;
+  fsControl.rmCalls = 0;
+  fsControl.failRenameAt.clear();
+  fsControl.failRmAt.clear();
   tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "customer-folder-"));
 });
 
@@ -148,6 +206,11 @@ describe("isPathInside", () => {
       isPathInside(path.join(tempDir, "a"), path.join(tempDir, "a", "..", "b"))
     ).toBe(false);
   });
+
+  it("rejects paths containing a NUL character", () => {
+    expect(isPathInside(`${tempDir}\0`, path.join(tempDir, "a"))).toBe(false);
+    expect(isPathInside(tempDir, `${path.join(tempDir, "a")}\0`)).toBe(false);
+  });
 });
 
 describe("readJsonFile", () => {
@@ -199,6 +262,30 @@ describe("readJsonFile", () => {
       await captureAsyncError(() => readJsonFile(file, MAX_ARTICLE_DATA_BYTES))
     ).toMatchObject({ code: "READ_FAILED" });
   });
+
+  it("rejects a relative path with READ_FAILED", async () => {
+    expect(
+      await captureAsyncError(() => readJsonFile("relative.json", 1024))
+    ).toMatchObject({ code: "READ_FAILED" });
+  });
+
+  it("rejects a path containing a NUL character with READ_FAILED", async () => {
+    expect(
+      await captureAsyncError(() =>
+        readJsonFile(`${path.join(tempDir, "nul.json")}\0`, 1024)
+      )
+    ).toMatchObject({ code: "READ_FAILED" });
+  });
+
+  it("rejects a directory with READ_FAILED", async () => {
+    const directory = path.join(tempDir, "directory.json");
+
+    await fs.mkdir(directory);
+
+    expect(
+      await captureAsyncError(() => readJsonFile(directory, 1024))
+    ).toMatchObject({ code: "READ_FAILED" });
+  });
 });
 
 describe("writeJsonAtomic", () => {
@@ -222,6 +309,41 @@ describe("writeJsonAtomic", () => {
     await expect(fs.readFile(file, "utf8")).resolves.toBe(
       `${JSON.stringify({ replaced: true }, null, 2)}\n`
     );
+  });
+
+  it("replaces the file when the first rename is refused (Windows fallback)", async () => {
+    const file = path.join(tempDir, "fallback.json");
+
+    await fs.writeFile(file, "old contents");
+    fsControl.failRenameAt.set(1, "EPERM");
+
+    await writeJsonAtomic(file, { replaced: true });
+
+    await expect(fs.readFile(file, "utf8")).resolves.toBe(
+      `${JSON.stringify({ replaced: true }, null, 2)}\n`
+    );
+    await expect(fs.readdir(tempDir)).resolves.toEqual(["fallback.json"]);
+  });
+
+  it("restores the previous file when the replacement rename fails", async () => {
+    const file = path.join(tempDir, "restore.json");
+
+    await fs.writeFile(file, "old contents");
+    fsControl.failRenameAt.set(1, "EPERM");
+    fsControl.failRenameAt.set(3, "EIO");
+
+    expect(
+      await captureAsyncError(() => writeJsonAtomic(file, { replaced: true }))
+    ).toMatchObject({ code: "WRITE_FAILED" });
+
+    await expect(fs.readFile(file, "utf8")).resolves.toBe("old contents");
+    await expect(fs.readdir(tempDir)).resolves.toEqual(["restore.json"]);
+  });
+
+  it("rejects a relative target path", async () => {
+    expect(
+      await captureAsyncError(() => writeJsonAtomic("relative.json", {}))
+    ).toMatchObject({ code: "WRITE_FAILED" });
   });
 
   it("leaves no temporary files behind", async () => {
@@ -346,6 +468,51 @@ describe("countValidArticles", () => {
     ]);
   });
 
+  it("rejects invalid schema versions and customer types", async () => {
+    const customerFolder = path.join(tempDir, FOLDER_NAME);
+
+    await createArticle(customerFolder, "article-zero", {
+      customer: "0001",
+      schemaVersion: 0,
+    });
+    await createArticle(customerFolder, "article-float", {
+      customer: "0001",
+      schemaVersion: 1.5,
+    });
+    await createArticle(customerFolder, "article-string", {
+      customer: "0001",
+      schemaVersion: "1",
+    });
+    await createArticle(customerFolder, "article-boolean", {
+      customer: true,
+      schemaVersion: 1,
+    });
+
+    const result = await countValidArticles(customerFolder, CUSTOMER_CODE);
+
+    expect(result.articleCount).toBe(0);
+    expect(result.issues).toHaveLength(4);
+    expect(result.issues.map((issue) => issue.code)).toEqual([
+      "ARTICLE_INVALID",
+      "ARTICLE_INVALID",
+      "ARTICLE_INVALID",
+      "ARTICLE_INVALID",
+    ]);
+  });
+
+  it("warns when article_data.json is not a regular file", async () => {
+    const customerFolder = path.join(tempDir, FOLDER_NAME);
+
+    await fs.mkdir(path.join(customerFolder, "article-1", ARTICLE_FILE), {
+      recursive: true,
+    });
+
+    const result = await countValidArticles(customerFolder, CUSTOMER_CODE);
+
+    expect(result.articleCount).toBe(0);
+    expect(result.issues[0]).toMatchObject({ code: "ARTICLE_INVALID" });
+  });
+
   it("warns about a symlinked article folder without counting it", async () => {
     const customerFolder = path.join(tempDir, FOLDER_NAME);
     const realArticle = path.join(tempDir, "elsewhere");
@@ -464,6 +631,79 @@ describe("moveCustomerToTrash", () => {
     await expect(pathExists(destination)).resolves.toBe(true);
   });
 
+  it("adds a numeric suffix when the timestamped destination is taken", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+
+    try {
+      const trashDirectory = path.join(tempDir, "trash");
+      const sourceFolderPath = path.join(tempDir, FOLDER_NAME);
+      const original = path.join(trashDirectory, FOLDER_NAME);
+      const stamped = `${original}-1700000000000`;
+
+      await fs.mkdir(original, { recursive: true });
+      await fs.mkdir(stamped);
+      await fs.mkdir(sourceFolderPath);
+
+      const destination = await moveCustomerToTrash({
+        folderName: FOLDER_NAME,
+        sourceFolderPath,
+        trashDirectory,
+      });
+
+      expect(destination).toBe(`${stamped}-1`);
+      await expect(pathExists(destination)).resolves.toBe(true);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("copies then removes the source when the move crosses devices", async () => {
+    const trashDirectory = path.join(tempDir, "trash");
+    const sourceFolderPath = path.join(tempDir, FOLDER_NAME);
+
+    await fs.mkdir(trashDirectory);
+    await fs.mkdir(sourceFolderPath);
+    await fs.writeFile(path.join(sourceFolderPath, "note.txt"), "hello");
+    fsControl.failRenameAt.set(1, "EXDEV");
+
+    const destination = await moveCustomerToTrash({
+      folderName: FOLDER_NAME,
+      sourceFolderPath,
+      trashDirectory,
+    });
+
+    expect(destination).toBe(path.join(trashDirectory, FOLDER_NAME));
+    await expect(pathExists(sourceFolderPath)).resolves.toBe(false);
+    await expect(
+      fs.readFile(path.join(destination, "note.txt"), "utf8")
+    ).resolves.toBe("hello");
+  });
+
+  it("keeps the source when the cross-device copy succeeded but its removal failed", async () => {
+    const trashDirectory = path.join(tempDir, "trash");
+    const sourceFolderPath = path.join(tempDir, FOLDER_NAME);
+
+    await fs.mkdir(trashDirectory);
+    await fs.mkdir(sourceFolderPath);
+    fsControl.failRenameAt.set(1, "EXDEV");
+    fsControl.failRmAt.set(1, "EACCES");
+
+    expect(
+      await captureAsyncError(() =>
+        moveCustomerToTrash({
+          folderName: FOLDER_NAME,
+          sourceFolderPath,
+          trashDirectory,
+        })
+      )
+    ).toMatchObject({ code: "TRASH_MOVE_FAILED" });
+
+    await expect(pathExists(sourceFolderPath)).resolves.toBe(true);
+    await expect(
+      pathExists(path.join(trashDirectory, FOLDER_NAME))
+    ).resolves.toBe(true);
+  });
+
   it("fails with TRASH_NOT_FOUND when the trash directory is missing", async () => {
     const sourceFolderPath = path.join(tempDir, FOLDER_NAME);
 
@@ -576,6 +816,24 @@ describe("moveCustomerToTrash", () => {
     for (const error of errors) {
       expect(error).toMatchObject({ code: "CUSTOMER_FOLDER_NAME_INVALID" });
     }
+  });
+
+  it("rejects a source whose name does not match the folder name", async () => {
+    const trashDirectory = path.join(tempDir, "trash");
+    const sourceFolderPath = path.join(tempDir, "other-folder");
+
+    await fs.mkdir(trashDirectory);
+    await fs.mkdir(sourceFolderPath);
+
+    expect(
+      await captureAsyncError(() =>
+        moveCustomerToTrash({
+          folderName: FOLDER_NAME,
+          sourceFolderPath,
+          trashDirectory,
+        })
+      )
+    ).toMatchObject({ code: "CUSTOMER_FOLDER_NAME_INVALID" });
   });
 
   it("fails with CUSTOMER_FOLDER_NOT_DIRECTORY when the source is a regular file", async () => {

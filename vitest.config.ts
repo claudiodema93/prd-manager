@@ -33,9 +33,9 @@ export default defineConfig({
       include: ["src/**/*.{ts,tsx}"],
       provider: "v8",
       reporter: ["text", "json", "html"],
-      // Just below the level the suite actually reaches today (about 60%
-      // statements/branches/lines and 42% functions), so a regression fails CI
-      // without making small refactors brittle. The critical modules must stay
+      // Well below the level the suite actually reaches today (about 88%
+      // statements/lines and 84% functions), so a regression fails CI without
+      // making small refactors brittle. The critical modules must stay
       // near-complete even if unrelated UI code drags the aggregate down.
       thresholds: {
         branches: 55,
@@ -46,6 +46,16 @@ export default defineConfig({
         "src/customers/**": {
           branches: 80,
           functions: 85,
+          lines: 85,
+          statements: 85,
+        },
+        // `folder.ts` validates every filesystem boundary; the aggregate glob
+        // would hide a regression in it. `functions` sits below the other axes
+        // because the uncovered functions are best-effort cleanup callbacks
+        // that only run when the cleanup itself fails.
+        "src/customers/folder.ts": {
+          branches: 80,
+          functions: 80,
           lines: 85,
           statements: 85,
         },

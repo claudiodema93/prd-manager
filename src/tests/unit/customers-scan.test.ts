@@ -13,7 +13,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_CUSTOMER_CONFIG_BYTES } from "@/customers/config";
 import { MAX_ARTICLE_DATA_BYTES } from "@/customers/folder";
 import { scanCustomers } from "@/customers/scan";
@@ -28,6 +28,31 @@ import type {
   CustomerScanResult,
 } from "@/customers/types";
 import { customers } from "@/db/schema";
+
+/**
+ * Simulates a folder that disappears between the directory listing and the
+ * per-entry `lstat`, a race that cannot be produced deterministically on a
+ * healthy filesystem.
+ */
+const scanControl = vi.hoisted(() => ({ missingPath: null as string | null }));
+
+vi.mock("@/customers/folder", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/customers/folder")>();
+
+  return {
+    ...actual,
+    lstatIfExists: (filePath: string) => {
+      if (
+        scanControl.missingPath !== null &&
+        filePath === scanControl.missingPath
+      ) {
+        return Promise.resolve(undefined);
+      }
+
+      return actual.lstatIfExists(filePath);
+    },
+  };
+});
 
 const schema = { customers };
 type TestDatabase = ReturnType<typeof drizzle<typeof schema>>;
@@ -105,6 +130,7 @@ async function makeTempDir(prefix: string): Promise<string> {
 }
 
 beforeEach(async () => {
+  scanControl.missingPath = null;
   sqlite = new Database(":memory:");
   const database: TestDatabase = drizzle({ client: sqlite, schema });
 
@@ -548,6 +574,22 @@ describe("scanCustomers", () => {
       severity: "error",
     });
     expect(getCustomerRow(db, firstPath)).not.toBeNull();
+  });
+
+  it("removes a row whose folder vanished between the listing and the inspection", async () => {
+    const folderPath = await createCustomerFolder("customer-0001");
+
+    insertRow(folderPath, "customer-0001");
+    scanControl.missingPath = folderPath;
+
+    try {
+      const result = await scanCustomers({ db, rootDirectory: root });
+
+      expect(result).toMatchObject({ removed: 1, scanned: 0 });
+      expect(getCustomerRow(db, folderPath)).toBeNull();
+    } finally {
+      scanControl.missingPath = null;
+    }
   });
 
   it("ignores hidden and non-customer entries but flags a customer-named file", async () => {

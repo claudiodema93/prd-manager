@@ -12,7 +12,7 @@
  */
 
 import type { Dirent, Stats } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { opendir } from "node:fs/promises";
 import path from "node:path";
 import { MAX_CUSTOMER_CONFIG_BYTES, parseCustomerConfig } from "./config";
 import { CustomerServiceError } from "./errors";
@@ -319,16 +319,20 @@ async function inspectCustomerFolder(input: {
 
   issues.push(...counted.issues);
 
+  const cappedIssues = capIssues(
+    issues,
+    MAX_CUSTOMER_ISSUES,
+    `customer "${input.folderName}"`,
+    input.folderPath
+  );
+
+  // Derive the status from the persisted list, so a capped row never reports an
+  // error whose issue was dropped by truncation.
   return {
     articleCount: counted.articleCount,
     config,
-    issues: capIssues(
-      issues,
-      MAX_CUSTOMER_ISSUES,
-      `customer "${input.folderName}"`,
-      input.folderPath
-    ),
-    status: resolveStatus(issues),
+    issues: cappedIssues,
+    status: resolveStatus(cappedIssues),
   };
 }
 
@@ -447,13 +451,35 @@ async function inspectRoot(root: string): Promise<CustomerScanResult | null> {
   return null;
 }
 
+/**
+ * Streams the root so a hostile directory is abandoned as soon as it exceeds
+ * the budget: `readdir` would materialise the whole listing first, which is the
+ * memory cost the budget is meant to avoid.
+ */
 async function readRootEntries(
-  root: string
+  root: string,
+  maxEntries: number
 ): Promise<CustomerScanResult | Dirent[]> {
-  try {
-    const entries = await readdir(root, { withFileTypes: true });
+  const entries: Dirent[] = [];
 
-    return entries.sort(compareEntryNames);
+  try {
+    const directory = await opendir(root);
+
+    try {
+      for await (const entry of directory) {
+        if (entries.length >= maxEntries) {
+          return failedScan(
+            root,
+            "ROOT_UNREADABLE",
+            `Customer root "${root}" has more than ${maxEntries} entries; the maximum is ${maxEntries}.`
+          );
+        }
+
+        entries.push(entry);
+      }
+    } finally {
+      await directory.close().catch(() => undefined);
+    }
   } catch (error) {
     return failedScan(
       root,
@@ -461,15 +487,17 @@ async function readRootEntries(
       `Unable to read customer root "${root}": ${errorMessage(error)}`
     );
   }
+
+  return entries.sort(compareEntryNames);
 }
 
 function appendCustomerIssues(
-  scanIssues: CustomerIssue[],
+  recordIssue: (issue: CustomerIssue) => void,
   customerIssues: readonly CustomerIssue[],
   folderPath: string
 ): void {
   for (const issue of customerIssues) {
-    scanIssues.push(
+    recordIssue(
       issue.path === undefined ? { ...issue, path: folderPath } : issue
     );
   }
@@ -498,6 +526,19 @@ async function reconcileEntries(
   const issues: CustomerIssue[] = [];
   const counters = { created: 0, unchanged: 0, updated: 0 };
   let scanned = 0;
+  let issuesTruncated = false;
+
+  // Cap while collecting instead of truncating at the end: a hostile root can
+  // produce thousands of issues per customer, and holding all of them before
+  // the final slice is the memory cost the cap is meant to avoid.
+  const recordScanIssue = (issue: CustomerIssue): void => {
+    if (issues.length < MAX_SCAN_ISSUES - 1) {
+      issues.push(issue);
+      return;
+    }
+
+    issuesTruncated = true;
+  };
 
   for (const entry of entries) {
     if (entry.name.startsWith(".")) {
@@ -509,7 +550,7 @@ async function reconcileEntries(
 
     if (parsed === null) {
       if (entry.name.startsWith(CUSTOMER_FOLDER_PREFIX)) {
-        issues.push(
+        recordScanIssue(
           customerIssue(
             "ENTRY_UNEXPECTED",
             "warning",
@@ -532,7 +573,7 @@ async function reconcileEntries(
       // biome-ignore lint/performance/noAwaitInLoops: customer folders are inspected sequentially to keep issue order deterministic.
       stats = await lstatIfExists(folderPath);
     } catch (error) {
-      issues.push(
+      recordScanIssue(
         customerIssue(
           "FOLDER_UNREADABLE",
           "error",
@@ -544,6 +585,9 @@ async function reconcileEntries(
     }
 
     if (!stats) {
+      // The folder disappeared between the directory listing and the
+      // inspection: it must not keep a stale row alive.
+      seen.delete(folderPath);
       continue;
     }
 
@@ -558,7 +602,17 @@ async function reconcileEntries(
 
     counters[reconciled.outcome] += 1;
     scanned += 1;
-    appendCustomerIssues(issues, reconciled.issues, folderPath);
+    appendCustomerIssues(recordScanIssue, reconciled.issues, folderPath);
+  }
+
+  if (issuesTruncated) {
+    issues.push(
+      customerIssue(
+        TRUNCATION_ISSUE_CODE,
+        "warning",
+        `Too many scan issues; only the first ${MAX_SCAN_ISSUES - 1} were recorded.`
+      )
+    );
   }
 
   return {
@@ -596,20 +650,11 @@ async function scanCustomersLocked(
     return rootFailure;
   }
 
-  const entries = await readRootEntries(root);
+  const maxRootEntries = options.maxRootEntries ?? MAX_ROOT_ENTRIES;
+  const entries = await readRootEntries(root, maxRootEntries);
 
   if (!Array.isArray(entries)) {
     return entries;
-  }
-
-  const maxRootEntries = options.maxRootEntries ?? MAX_ROOT_ENTRIES;
-
-  if (entries.length > maxRootEntries) {
-    return failedScan(
-      root,
-      "ROOT_UNREADABLE",
-      `Customer root "${root}" has ${entries.length} entries; the maximum is ${maxRootEntries}.`
-    );
   }
 
   const summary = await reconcileEntries(db, root, entries);
@@ -629,7 +674,8 @@ async function scanCustomersLocked(
 
   return {
     created: summary.created,
-    issues: capIssues(summary.issues, MAX_SCAN_ISSUES, "scan"),
+    // `reconcileEntries` already caps and truncates while collecting.
+    issues: [...summary.issues],
     removed,
     root,
     scanned: summary.scanned,
