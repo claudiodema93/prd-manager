@@ -14,6 +14,7 @@
     "noImplicitAny": true,
     "sourceMap": true,
     "strict": true,
+    "skipLibCheck": true,
     "paths": {
       "@/*": ["./src/*"]
     },
@@ -26,6 +27,7 @@
     "scripts/**/*",
     "./package.json",
     "./forge.config.ts",
+    "./drizzle.config.ts",
     "*.mts"
   ]
 }

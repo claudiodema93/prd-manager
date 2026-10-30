@@ -11,6 +11,8 @@
     "ignoreUnknown": true,
     "includes": [
       "!**/node_modules",
+      "!**/drizzle",
+      "!**/graphify-out",
       "!**/*.d.ts",
       "!**/ui",
       "!**/routerTree.gen.ts"

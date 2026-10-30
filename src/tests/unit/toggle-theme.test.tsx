@@ -1,26 +1,76 @@
-import { render } from "@testing-library/react";
-import { expect, test } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import ToggleTheme from "@/components/toggle-theme";
 
-test("renders ToggleTheme", () => {
-  const { getByRole } = render(<ToggleTheme />);
-  const isButton = getByRole("button");
+const { toggleThemeMode } = vi.hoisted(() => ({
+  toggleThemeMode: vi.fn(),
+}));
 
-  expect(isButton).toBeInTheDocument();
+// Mocking the manager is required: importing the real module creates a
+// MessageChannel and posts to the main-process bridge, which does not exist
+// under jsdom.
+vi.mock("@/ipc/manager", () => ({
+  ipc: {
+    client: {
+      theme: {
+        toggleThemeMode,
+      },
+    },
+  },
+}));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  localStorage.clear();
+  document.documentElement.classList.remove("dark");
 });
 
-test("has icon", () => {
-  const { getByRole } = render(<ToggleTheme />);
-  const button = getByRole("button");
-  const icon = button.querySelector("svg");
+describe("ToggleTheme", () => {
+  it("renders a button with the moon icon", () => {
+    render(<ToggleTheme />);
 
-  expect(icon).toBeInTheDocument();
-});
+    const button = screen.getByRole("button");
 
-test("is moon icon", () => {
-  const svgIconClassName: string = "lucide-moon";
-  const { getByRole } = render(<ToggleTheme />);
-  const svg = getByRole("button").querySelector("svg");
+    expect(button).toBeInTheDocument();
+    expect(button.querySelector("svg")?.classList).toContain("lucide-moon");
+  });
 
-  expect(svg?.classList).toContain(svgIconClassName);
+  it("calls the toggle action and applies the returned dark state", async () => {
+    toggleThemeMode.mockResolvedValue({ dark: true, source: "dark" });
+
+    render(<ToggleTheme />);
+    fireEvent.click(screen.getByRole("button"));
+
+    await waitFor(() => expect(toggleThemeMode).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(document.documentElement.classList.contains("dark")).toBe(true)
+    );
+  });
+
+  it("removes the dark class when the toggle resolves light", async () => {
+    document.documentElement.classList.add("dark");
+    toggleThemeMode.mockResolvedValue({ dark: false, source: "light" });
+
+    render(<ToggleTheme />);
+    fireEvent.click(screen.getByRole("button"));
+
+    await waitFor(() =>
+      expect(document.documentElement.classList.contains("dark")).toBe(false)
+    );
+  });
+
+  it("handles a rejected toggle without an unhandled rejection", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    toggleThemeMode.mockRejectedValue(new Error("ipc unavailable"));
+
+    render(<ToggleTheme />);
+    fireEvent.click(screen.getByRole("button"));
+
+    await waitFor(() => expect(consoleError).toHaveBeenCalled());
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+
+    consoleError.mockRestore();
+  });
 });

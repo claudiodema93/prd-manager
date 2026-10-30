@@ -57,9 +57,13 @@ typings/
 # Yarn Integrity file
 .yarn-integrity
 
-# dotenv environment variables file
-.env
-.env.test
+# Environment and secrets
+.env*
+!.env.example
+*.pem
+*.key
+*.p12
+.claude/settings.local.json
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -102,3 +106,13 @@ out/
 
 # Tanstack
 .tanstack/
+
+# SQLite
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.corrupt-*
+
+# Generated knowledge graph (graphify)
+graphify-out/

@@ -1,36 +1,39 @@
 import { os } from "@orpc/server";
 import { nativeTheme } from "electron";
-import { setThemeModeInputSchema } from "./schemas";
+import type { ThemeSource } from "@/types/theme-mode";
+import { setThemeModeInputSchema, themeModeOutputSchema } from "./schemas";
 
-export const getCurrentThemeMode = os.handler(() => nativeTheme.themeSource);
+interface ThemeModeState {
+  dark: boolean;
+  source: ThemeSource;
+}
 
-export const toggleThemeMode = os.handler(() => {
-  if (nativeTheme.shouldUseDarkColors) {
-    nativeTheme.themeSource = "light";
-  } else {
-    nativeTheme.themeSource = "dark";
-  }
+// `nativeTheme` updates synchronously when `themeSource` is assigned, so the
+// effective dark state can be read back immediately after a change.
+function currentThemeMode(): ThemeModeState {
+  return {
+    dark: nativeTheme.shouldUseDarkColors,
+    source: nativeTheme.themeSource,
+  };
+}
 
-  return nativeTheme.shouldUseDarkColors;
+export const getCurrentThemeMode = os
+  .output(themeModeOutputSchema)
+  .handler(() => currentThemeMode());
+
+export const toggleThemeMode = os.output(themeModeOutputSchema).handler(() => {
+  // Toggle the *effective* current appearance, so the first click on a dark
+  // system selects light instead of re-selecting dark.
+  nativeTheme.themeSource = nativeTheme.shouldUseDarkColors ? "light" : "dark";
+
+  return currentThemeMode();
 });
 
 export const setThemeMode = os
   .input(setThemeModeInputSchema)
+  .output(themeModeOutputSchema)
   .handler(({ input }) => {
-    switch (input as "light" | "dark" | "system") {
-      case "light":
-        nativeTheme.themeSource = "light";
-        break;
-      case "dark":
-        nativeTheme.themeSource = "dark";
-        break;
-      case "system":
-        nativeTheme.themeSource = "system";
-        break;
-      default:
-        nativeTheme.themeSource = "system";
-        break;
-    }
+    nativeTheme.themeSource = input.mode;
 
-    return nativeTheme.themeSource;
+    return currentThemeMode();
   });

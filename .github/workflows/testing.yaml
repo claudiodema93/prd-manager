@@ -5,28 +5,42 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tests-unit:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          node-version: 24
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Run unit tests
-        run: npm run test:unit
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Run unit tests with coverage
+        run: npm run test:coverage
 
   test-e2e:
     timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          node-version: 24
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies
@@ -35,23 +49,26 @@ jobs:
       - name: Install Electron binary
         run: node node_modules/electron/install.js
         env:
+          # The Electron binary is downloaded from GitHub, so a token avoids
+          # anonymous API rate limits. No other e2e step needs it.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Playwright Browsers
         run: npx playwright install --with-deps chromium
 
       - name: Create Executable
-        run: npm run package
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run test:e2e:build
 
       - name: Run Playwright tests
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" npm run test:e2e
 
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-report
-          path: playwright-report/
+          path: |
+            playwright-report/
+            test-results/
           retention-days: 7
+          if-no-files-found: ignore

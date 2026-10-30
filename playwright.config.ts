@@ -18,5 +18,7 @@ export default defineConfig({
   use: {
     trace: "on-first-retry",
   },
-  workers: process.env.CI ? 1 : undefined,
+  // The app enforces a single-instance lock, so only one packaged instance may
+  // run at a time; test files must not execute concurrently.
+  workers: 1,
 });

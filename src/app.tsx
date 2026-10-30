@@ -11,7 +11,11 @@ export default function App() {
   const { i18n } = useTranslation();
 
   useEffect(() => {
-    syncWithLocalTheme();
+    // Theme synchronisation talks to the main process; surface failures instead
+    // of leaving the effect with an unhandled rejection.
+    syncWithLocalTheme().catch((error: unknown) => {
+      console.error("Failed to apply the stored theme:", error);
+    });
     updateAppLanguage(i18n);
   }, [i18n]);
 

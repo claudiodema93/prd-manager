@@ -1,35 +1,29 @@
-# electron-shadcn
+# PrdManager
 
-Electron in all its glory. Everything you will need to develop your beautiful desktop application.
-
-![Demo GIF](https://github.com/LuanRoger/electron-shadcn/blob/main/images/demo.png)
+Desktop application for managing product requirement documents, built with Electron, React, and a local SQLite cache.
 
 ## Libs and tools
 
-To develop a Electron app, you probably will need some UI, test, formatter, style or other kind of library or framework, so let me install and configure some of them to you.
-
 ### Core 🏍️
 
-- [Electron 43](https://www.electronjs.org)
-- [Vite 8](https://vitejs.dev)
+- [Electron](https://www.electronjs.org)
+- [Vite](https://vitejs.dev)
 
 ### DX 🛠️
 
-- [TypeScript 6](https://www.typescriptlang.org)
+- [TypeScript](https://www.typescriptlang.org)
 - [oRPC](https://orpc.unnoq.com)
-- [Prettier](https://prettier.io)
 - [Ultracite with Biome](https://www.ultracite.ai/providers/biome)
-- [Zod 4](https://zod.dev)
-- [React Query (TanStack)](https://react-query.tanstack.com)
+- [Zod](https://zod.dev)
 
 ### UI 🎨
 
-- [React 19.2](https://reactjs.org)
-- [Tailwind 4.3](https://tailwindcss.com)
+- [React](https://reactjs.org)
+- [Tailwind CSS](https://tailwindcss.com)
 - [Shadcn UI](https://ui.shadcn.com)
 - [Geist](https://vercel.com/font) as default font
 - [i18next](https://www.i18next.com)
-- [TanStack Router](https://tanstack.com/router) (with file based routing)
+- [TanStack Router](https://tanstack.com/router) (file based routing)
 - [Lucide](https://lucide.dev)
 
 ### Test 🧪
@@ -44,26 +38,23 @@ To develop a Electron app, you probably will need some UI, test, formatter, styl
 
 ### CI/CD 🚀
 
-- Pre-configured [GitHub Actions workflow](https://github.com/LuanRoger/electron-shadcn/blob/main/.github/workflows/playwright.yml), for test with Playwright
+- GitHub Actions for checks, unit/e2e tests, and releases.
 
-### Project preferences 🎯
+## Project preferences 🎯
 
-- Use Context isolation
+- Context isolation, `nodeIntegration: false`, and Electron's sandbox enabled.
 - [React Compiler](https://react.dev/learn/react-compiler) is enabled by default.
-- `titleBarStyle`: hidden (Using custom title bar)
-- Geist as default font
-- Some default styles was applied, check the [`styles`](https://github.com/LuanRoger/electron-shadcn/tree/main/src/styles) directory
-- React DevTools are installed by default
+- `titleBarStyle`: hidden (custom title bar).
+- Geist as default font.
+- React DevTools are installed in development.
 
 ## How to use
 
-1. Clone this repository
+1. Clone the repository
 
 ```bash
-git clone https://github.com/LuanRoger/electron-shadcn.git
+git clone https://github.com/claudiodema93/prd-manager.git
 ```
-
-Or use it as a template on GitHub
 
 2. Install dependencies
 
@@ -79,36 +70,31 @@ npm run start
 
 Now you can go directly to `/src/routes/index.tsx` and modify the app as you want.
 
-> You can also delete the `/src/routes/second.tsx` file if you don't want a second page.
+## Database
+
+The app keeps a SQLite cache in the Electron `userData` directory (`cache.db`), managed with Drizzle ORM and better-sqlite3 in the main process.
+
+- The database is a disposable cache. A damaged file is reset in place (tables dropped and migrations re-applied) or, when that is not possible, moved aside as `cache.db.corrupt-<timestamp>`. The file is **never deleted**, and files that are not SQLite databases are never modified.
+- An `application_id` sentinel prevents the app from touching another application's SQLite database.
+- Set `SAUGER_CACHE_DB_PATH` to use a different file (absolute path, or `:memory:` in tests).
+- The startup integrity check can be skipped in development for large caches with `SAUGER_CACHE_SKIP_INTEGRITY_CHECK=1`; packaged builds always check.
+- The schema lives in `src/db/schema.ts`. After changing it, run `npm run db:generate` and commit the generated `drizzle/` folder.
+- Migrations are applied automatically on startup and shipped in packaged builds through `extraResource`.
+- Database rows are exposed to the renderer only through oRPC procedures (`src/ipc/customers` → `src/actions/customers.ts`).
 
 ## Auto update
 
+The auto update uses GitHub Releases from [claudiodema93/prd-manager](https://github.com/claudiodema93/prd-manager) as the update source. The `publish` script creates a new release with the version specified in `package.json`.
+
 > [!WARNING]
-> This feature only work in open-source repositories in GitHub, if you need to use in a private repository, you need to setup a custom update server. Check the [Updating Applications](https://www.electronjs.org/docs/latest/tutorial/updates) section in the Electron documentation for more details.
+> Auto update only works with public repositories. Use a custom update server for private repositories.
 
-The auto update uses GitHub Releases as source for the updates. The `publish` script will automatically create a new release with the version specified in your `package.json` file. You can run locally the `publish` script to create a new release, but you need to set the `GITHUB_TOKEN` environment variable with a GitHub Personal Access Token that has permission to create releases in your repository.
+You can also use the GitHub Actions workflow to create a new release. The workflow has to be triggered manually and creates a draft release by default, so you can review it before publishing.
 
-You can also use the GitHub Actions workflow to automatically create a new release when you push a new tag to the repository. The workflow need to be triggered manually, but you can modify to fit your needs. Also, the release is created as draft by default, so you can review and set a proper description before publish.
+> Check the [`.github/workflows/publish.yaml`](https://github.com/claudiodema93/prd-manager/blob/main/.github/workflows/publish.yaml) file for more details.
 
-> Check the [`.github/workflows/publish.yml`](https://github.com/LuanRoger/electron-shadcn/blob/main/.github/workflows/publish.yaml) file for more details.
-
-When you open the app, it will check for updates automatically. If an update is available, it will download and install the update, after that, it will restart the app to apply the update. This ensure  that your users always have the latest version of your app.
-
-The auto update is implemented using [update-electron-app](https://github.com/electron/update-electron-app) to check the updates and apply them. For the publishing, it is using the [Electron Forge's GitHub publisher](https://www.electronforge.io/config/publishers/github).
-
-## Documentation
-
-Check out the full documentation [here](https://docs.luanroger.dev/electron-shadcn).
-
-## Used by
-
-- [yaste](https://github.com/LuanRoger/yaste) - yaste (Yet another super ₛᵢₘₚₗₑ text editor) is a text editor, that can be used as an alternative to the native text editor of your SO, maybe.
-- [eletric-drizzle](https://github.com/LuanRoger/electric-drizzle) - shadcn-ui and Drizzle ORM with Electron.
-- [Wordle Game](https://github.com/masonyekta/wordle-game) - A Wordle game which features interactive gameplay, cross-platform compatibility, and integration with a custom Wordle API for word validation and letter correctness.
-- [Mehr 🌟](https://github.com/xmannii/MehrLocalChat) - A modern, elegant local AI chatbot application using Electron, React, shadcn/ui, and Ollama.
-
-> Does you've used this template in your project? Add it here and open a PR.
+The implementation uses [update-electron-app](https://github.com/electron/update-electron-app) and the [Electron Forge GitHub publisher](https://www.electronforge.io/config/publishers/github).
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](https://github.com/LuanRoger/electron-shadcn/blob/main/LICENSE) file for details.
+This project is licensed under the MIT License — see the [LICENSE](https://github.com/claudiodema93/prd-manager/blob/main/LICENSE) file for details.
