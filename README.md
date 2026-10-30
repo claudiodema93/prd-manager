@@ -76,8 +76,8 @@ The app keeps a SQLite cache in the Electron `userData` directory (`cache.db`), 
 
 - The database is a disposable cache. A damaged file is reset in place (tables dropped and migrations re-applied) or, when that is not possible, moved aside as `cache.db.corrupt-<timestamp>`. The file is **never deleted**, and files that are not SQLite databases are never modified.
 - An `application_id` sentinel prevents the app from touching another application's SQLite database.
-- Set `SAUGER_CACHE_DB_PATH` to use a different file (absolute path, or `:memory:` in tests).
-- The startup integrity check can be skipped in development for large caches with `SAUGER_CACHE_SKIP_INTEGRITY_CHECK=1`; packaged builds always check.
+- Set `APP_CACHE_DB_PATH` to use a different file (absolute path, or `:memory:` in tests).
+- The startup integrity check can be skipped in development for large caches with `APP_CACHE_SKIP_INTEGRITY_CHECK=1`; packaged builds always check.
 - The schema lives in `src/db/schema.ts`. After changing it, run `npm run db:generate` and commit the generated `drizzle/` folder.
 - Migrations are applied automatically on startup and shipped in packaged builds through `extraResource`.
 - Database rows are exposed to the renderer only through oRPC procedures (`src/ipc/customers` → `src/actions/customers.ts`).

@@ -1,25 +1,25 @@
 import type { i18n } from "i18next";
-import { LOCAL_STORAGE_KEYS } from "@/constants";
+import { ipc } from "@/ipc/manager";
+import { LANGUAGE_KEYS, type LanguageKey } from "@/localization/langs";
 
-export function setAppLanguage(lang: string, i18: i18n) {
+function isLanguageKey(value: string): value is LanguageKey {
+  return (LANGUAGE_KEYS as readonly string[]).includes(value);
+}
+
+export async function setAppLanguage(lang: string, i18: i18n): Promise<void> {
   // Radix' ToggleGroup emits an empty string when the active item is clicked.
-  if (!lang) {
+  if (!isLanguageKey(lang)) {
     return;
   }
 
-  localStorage.setItem(LOCAL_STORAGE_KEYS.LANGUAGE, lang);
-  i18.changeLanguage(lang);
+  await ipc.client.preferences.setLanguage({ language: lang });
+  await i18.changeLanguage(lang);
   document.documentElement.lang = lang;
 }
 
-export function updateAppLanguage(i18: i18n) {
-  const localLang = localStorage.getItem(LOCAL_STORAGE_KEYS.LANGUAGE);
+export async function updateAppLanguage(i18: i18n): Promise<void> {
+  const { language } = await ipc.client.preferences.getPreferences();
 
-  if (localLang) {
-    i18.changeLanguage(localLang);
-  }
-
-  // Always expose the active language, including on first launch where no
-  // preference has been stored yet.
+  await i18.changeLanguage(language);
   document.documentElement.lang = i18.language;
 }

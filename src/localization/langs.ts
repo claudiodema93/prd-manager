@@ -1,5 +1,9 @@
 import type { Language } from "./language";
 
+export const LANGUAGE_KEYS = ["en", "pt-BR"] as const;
+
+export type LanguageKey = (typeof LANGUAGE_KEYS)[number];
+
 export default [
   {
     key: "en",
@@ -11,4 +15,4 @@ export default [
     nativeName: "Português (Brasil)",
     prefix: "PT-BR",
   },
-] as const satisfies Language[];
+] as const satisfies readonly (Language & { key: LanguageKey })[];

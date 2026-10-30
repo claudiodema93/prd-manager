@@ -3,9 +3,20 @@ import React, { useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { useTranslation } from "react-i18next";
 import { updateAppLanguage } from "./actions/language";
-import { syncWithLocalTheme } from "./actions/theme";
+import { syncTheme } from "./actions/theme";
 import { router } from "./utils/routes";
 import "./localization/i18n";
+
+// Apply the effective scheme before React mounts. The main process sets
+// `nativeTheme.themeSource` from the stored preference before creating the
+// window, so `prefers-color-scheme` already reflects an explicit mode and the
+// first paint is not briefly light.
+if (typeof window.matchMedia === "function") {
+  document.documentElement.classList.toggle(
+    "dark",
+    window.matchMedia("(prefers-color-scheme: dark)").matches
+  );
+}
 
 export default function App() {
   const { i18n } = useTranslation();
@@ -13,10 +24,12 @@ export default function App() {
   useEffect(() => {
     // Theme synchronisation talks to the main process; surface failures instead
     // of leaving the effect with an unhandled rejection.
-    syncWithLocalTheme().catch((error: unknown) => {
+    syncTheme().catch((error: unknown) => {
       console.error("Failed to apply the stored theme:", error);
     });
-    updateAppLanguage(i18n);
+    updateAppLanguage(i18n).catch((error: unknown) => {
+      console.error("Failed to apply the stored language:", error);
+    });
   }, [i18n]);
 
   return <RouterProvider router={router} />;

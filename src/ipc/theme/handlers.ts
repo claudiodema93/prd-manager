@@ -1,5 +1,6 @@
 import { os } from "@orpc/server";
 import { nativeTheme } from "electron";
+import { setThemePreference } from "@/preferences/store";
 import type { ThemeSource } from "@/types/theme-mode";
 import { setThemeModeInputSchema, themeModeOutputSchema } from "./schemas";
 
@@ -25,6 +26,7 @@ export const toggleThemeMode = os.output(themeModeOutputSchema).handler(() => {
   // Toggle the *effective* current appearance, so the first click on a dark
   // system selects light instead of re-selecting dark.
   nativeTheme.themeSource = nativeTheme.shouldUseDarkColors ? "light" : "dark";
+  setThemePreference(nativeTheme.themeSource);
 
   return currentThemeMode();
 });
@@ -34,6 +36,7 @@ export const setThemeMode = os
   .output(themeModeOutputSchema)
   .handler(({ input }) => {
     nativeTheme.themeSource = input.mode;
+    setThemePreference(input.mode);
 
     return currentThemeMode();
   });

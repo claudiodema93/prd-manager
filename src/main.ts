@@ -1,12 +1,54 @@
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { app, BrowserWindow, dialog, nativeTheme, session } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  nativeTheme,
+  screen,
+  session,
+} from "electron";
 import { ipcMain } from "electron/main";
 import started from "electron-squirrel-startup";
 import { UpdateSourceType, updateElectronApp } from "update-electron-app";
 import { ipcContext } from "@/ipc/context";
+import { WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH } from "@/preferences/schema";
+import {
+  getThemePreference,
+  getWindowState,
+  initializePreferences,
+  setWindowState,
+} from "@/preferences/store";
+import {
+  resolveWindowState,
+  showRestoredWindow,
+} from "@/preferences/window-state";
 import { IPC_CHANNELS } from "./constants";
 import { getBasePath } from "./utils/path";
+
+/**
+ * macOS resolves `userData` through the OS account, not `$HOME`, so the e2e
+ * helper cannot isolate the single-instance lock with environment variables.
+ * The E2E build may point `userData` at its own temp directory instead.
+ */
+function configureE2EUserData(): void {
+  if (process.env.APP_E2E !== "1") {
+    return;
+  }
+
+  const directory = process.env.APP_USER_DATA_DIR?.trim();
+
+  if (!directory) {
+    return;
+  }
+
+  const resolved = path.resolve(directory);
+  fs.mkdirSync(resolved, { recursive: true });
+  app.setPath("userData", resolved);
+}
+
+configureE2EUserData();
 
 /**
  * True only for an unpackaged (development) run.
@@ -73,12 +115,55 @@ function hardenSession() {
   });
 }
 
+let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
+
+function clearPendingWindowStateSave() {
+  if (windowStateTimer) {
+    clearTimeout(windowStateTimer);
+    windowStateTimer = undefined;
+  }
+}
+
+function persistWindowState(window: BrowserWindow) {
+  if (window.isDestroyed()) {
+    return;
+  }
+
+  // `getNormalBounds()` is the normal-state rectangle even when the window is
+  // maximized, minimized or fullscreen, so the saved size stays usable.
+  // Source: https://www.electronjs.org/docs/latest/api/browser-window#wingetnormalbounds
+  const bounds = window.getNormalBounds();
+
+  setWindowState({
+    height: Math.round(bounds.height),
+    isMaximized: window.isMaximized(),
+    width: Math.round(bounds.width),
+    x: Math.round(bounds.x),
+    y: Math.round(bounds.y),
+  });
+}
+
+function scheduleWindowStateSave(window: BrowserWindow) {
+  clearPendingWindowStateSave();
+  windowStateTimer = setTimeout(() => {
+    windowStateTimer = undefined;
+    persistWindowState(window);
+  }, 250);
+}
+
 function createWindow() {
   const basePath = getBasePath();
   const preload = path.join(basePath, "preload.cjs");
+  const savedWindow = resolveWindowState(
+    getWindowState(),
+    screen.getAllDisplays(),
+    screen.getPrimaryDisplay()
+  );
   const mainWindow = new BrowserWindow({
     backgroundColor: getWindowBackgroundColor(),
-    height: 600,
+    height: savedWindow.height,
+    minHeight: WINDOW_MIN_HEIGHT,
+    minWidth: WINDOW_MIN_WIDTH,
     show: false,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
     trafficLightPosition:
@@ -97,21 +182,34 @@ function createWindow() {
       sandbox: true,
       webviewTag: false,
     },
-    width: 800,
+    width: savedWindow.width,
+    ...(savedWindow.x === undefined || savedWindow.y === undefined
+      ? {}
+      : { x: savedWindow.x, y: savedWindow.y }),
   });
   ipcContext.setMainWindow(mainWindow);
+
   mainWindow.on("closed", () => {
     if (ipcContext.mainWindow === mainWindow) {
       ipcContext.mainWindow = undefined;
     }
   });
 
+  // Persist resizes/moves while dragging, plus the final state on close. The
+  // debounce keeps the JSON write off the drag path.
+  mainWindow.on("resize", () => scheduleWindowStateSave(mainWindow));
+  mainWindow.on("move", () => scheduleWindowStateSave(mainWindow));
+  mainWindow.on("maximize", () => persistWindowState(mainWindow));
+  mainWindow.on("unmaximize", () => persistWindowState(mainWindow));
+  mainWindow.on("close", () => {
+    clearPendingWindowStateSave();
+    persistWindowState(mainWindow);
+  });
+
   // The window starts hidden so it appears fully painted instead of flashing
   // an empty frame.
   mainWindow.once("ready-to-show", () => {
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.show();
-    }
+    showRestoredWindow(mainWindow, savedWindow.isMaximized);
   });
 
   // Never let the renderer spawn additional windows (`window.open`,
@@ -274,6 +372,12 @@ if (started) {
     app.whenReady().then(async () => {
       try {
         hardenSession();
+
+        // Preferences need `app.getPath("userData")`, so they are initialised
+        // after `whenReady()`. Apply the stored theme before the window exists
+        // so the first paint already has the right appearance.
+        initializePreferences();
+        nativeTheme.themeSource = getThemePreference();
 
         if (!(await initializeDatabase())) {
           return;

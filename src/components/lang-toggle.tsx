@@ -16,7 +16,9 @@ export default function LangToggle() {
       return;
     }
 
-    setAppLanguage(value, i18n);
+    setAppLanguage(value, i18n).catch((error: unknown) => {
+      console.error("Failed to change the language:", error);
+    });
   }
 
   return (

@@ -1,17 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { setTheme, syncWithLocalTheme, toggleTheme } from "@/actions/theme";
-import { LOCAL_STORAGE_KEYS } from "@/constants";
+import { setTheme, syncTheme, toggleTheme } from "@/actions/theme";
 
-const { setThemeMode, toggleThemeMode } = vi.hoisted(() => ({
-  setThemeMode: vi.fn(),
-  toggleThemeMode: vi.fn(),
-}));
+const { getCurrentThemeMode, setThemeMode, toggleThemeMode } = vi.hoisted(
+  () => ({
+    getCurrentThemeMode: vi.fn(),
+    setThemeMode: vi.fn(),
+    toggleThemeMode: vi.fn(),
+  })
+);
 
 // Importing the real manager opens a MessageChannel; jsdom has no bridge.
 vi.mock("@/ipc/manager", () => ({
   ipc: {
     client: {
       theme: {
+        getCurrentThemeMode,
         setThemeMode,
         toggleThemeMode,
       },
@@ -58,46 +61,31 @@ function hasDarkClass() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  localStorage.clear();
   document.documentElement.classList.remove("dark");
   mediaQuery.matches = false;
+  getCurrentThemeMode.mockResolvedValue({ dark: false, source: "system" });
   window.matchMedia = vi.fn(
     () => mediaQuery
   ) as unknown as typeof window.matchMedia;
 });
 
-describe("syncWithLocalTheme", () => {
-  it("follows a dark OS on first run when no value is stored", async () => {
+describe("syncTheme", () => {
+  it("mirrors the system theme restored by the main process", async () => {
     mediaQuery.matches = true;
-    setThemeMode.mockResolvedValue({ dark: true, source: "system" });
+    getCurrentThemeMode.mockResolvedValue({ dark: true, source: "system" });
 
-    await syncWithLocalTheme();
+    await syncTheme();
 
-    expect(setThemeMode).toHaveBeenCalledWith({ mode: "system" });
-    expect(localStorage.getItem(LOCAL_STORAGE_KEYS.THEME)).toBe("system");
+    expect(getCurrentThemeMode).toHaveBeenCalledTimes(1);
+    expect(setThemeMode).not.toHaveBeenCalled();
     expect(hasDarkClass()).toBe(true);
   });
 
-  it("falls back to system when the stored value is invalid", async () => {
-    localStorage.setItem(LOCAL_STORAGE_KEYS.THEME, "neon");
-    document.documentElement.classList.add("dark");
-    mediaQuery.matches = false;
-    setThemeMode.mockResolvedValue({ dark: false, source: "system" });
+  it("mirrors an explicit theme restored by the main process", async () => {
+    getCurrentThemeMode.mockResolvedValue({ dark: true, source: "dark" });
 
-    await syncWithLocalTheme();
+    await syncTheme();
 
-    expect(setThemeMode).toHaveBeenCalledWith({ mode: "system" });
-    expect(localStorage.getItem(LOCAL_STORAGE_KEYS.THEME)).toBe("system");
-    expect(hasDarkClass()).toBe(false);
-  });
-
-  it("restores a valid stored mode", async () => {
-    localStorage.setItem(LOCAL_STORAGE_KEYS.THEME, "dark");
-    setThemeMode.mockResolvedValue({ dark: true, source: "dark" });
-
-    await syncWithLocalTheme();
-
-    expect(setThemeMode).toHaveBeenCalledWith({ mode: "dark" });
     expect(hasDarkClass()).toBe(true);
   });
 });
@@ -109,7 +97,6 @@ describe("setTheme", () => {
     await setTheme("dark");
 
     expect(setThemeMode).toHaveBeenCalledWith({ mode: "dark" });
-    expect(localStorage.getItem(LOCAL_STORAGE_KEYS.THEME)).toBe("dark");
     expect(hasDarkClass()).toBe(true);
   });
 
@@ -121,7 +108,6 @@ describe("setTheme", () => {
     await setTheme("system");
 
     expect(setThemeMode).toHaveBeenCalledWith({ mode: "system" });
-    expect(localStorage.getItem(LOCAL_STORAGE_KEYS.THEME)).toBe("system");
     expect(hasDarkClass()).toBe(true);
   });
 
@@ -157,16 +143,14 @@ describe("toggleTheme", () => {
     await toggleTheme();
 
     expect(toggleThemeMode).toHaveBeenCalledTimes(1);
-    expect(localStorage.getItem(LOCAL_STORAGE_KEYS.THEME)).toBe("light");
     expect(hasDarkClass()).toBe(false);
   });
 
-  it("stores the explicit source returned by the main process", async () => {
+  it("applies the explicit source returned by the main process", async () => {
     toggleThemeMode.mockResolvedValue({ dark: true, source: "dark" });
 
     await toggleTheme();
 
-    expect(localStorage.getItem(LOCAL_STORAGE_KEYS.THEME)).toBe("dark");
     expect(hasDarkClass()).toBe(true);
   });
 });

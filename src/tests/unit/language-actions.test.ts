@@ -1,7 +1,23 @@
 import type { i18n as I18n } from "i18next";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setAppLanguage, updateAppLanguage } from "@/actions/language";
-import { LOCAL_STORAGE_KEYS } from "@/constants";
+
+const { getPreferences, setLanguage } = vi.hoisted(() => ({
+  getPreferences: vi.fn(),
+  setLanguage: vi.fn(),
+}));
+
+// Importing the real manager opens a MessageChannel; jsdom has no bridge.
+vi.mock("@/ipc/manager", () => ({
+  ipc: {
+    client: {
+      preferences: {
+        getPreferences,
+        setLanguage,
+      },
+    },
+  },
+}));
 
 function createI18n(initialLanguage = "en") {
   let language = initialLanguage;
@@ -26,52 +42,56 @@ function asI18n(fake: FakeI18n): I18n {
 }
 
 beforeEach(() => {
-  localStorage.clear();
+  vi.clearAllMocks();
   document.documentElement.lang = "";
+  getPreferences.mockResolvedValue({ language: "en", theme: "system" });
+  setLanguage.mockImplementation(({ language }: { language: string }) =>
+    Promise.resolve({ language, theme: "system" })
+  );
 });
 
 describe("setAppLanguage", () => {
-  it("stores the language, changes i18n and updates document.lang", () => {
+  it("persists the language, changes i18n and updates document.lang", async () => {
     const fake = createI18n("en");
 
-    setAppLanguage("pt-BR", asI18n(fake));
+    await setAppLanguage("pt-BR", asI18n(fake));
 
-    expect(localStorage.getItem(LOCAL_STORAGE_KEYS.LANGUAGE)).toBe("pt-BR");
+    expect(setLanguage).toHaveBeenCalledWith({ language: "pt-BR" });
     expect(fake.changeLanguage).toHaveBeenCalledWith("pt-BR");
     expect(document.documentElement.lang).toBe("pt-BR");
   });
 
-  it("ignores an empty value emitted by the toggle group", () => {
-    localStorage.setItem(LOCAL_STORAGE_KEYS.LANGUAGE, "pt-BR");
+  it("ignores an empty value emitted by the toggle group", async () => {
     document.documentElement.lang = "pt-BR";
     const fake = createI18n("pt-BR");
 
-    setAppLanguage("", asI18n(fake));
+    await setAppLanguage("", asI18n(fake));
 
+    expect(setLanguage).not.toHaveBeenCalled();
     expect(fake.changeLanguage).not.toHaveBeenCalled();
-    expect(localStorage.getItem(LOCAL_STORAGE_KEYS.LANGUAGE)).toBe("pt-BR");
     expect(document.documentElement.lang).toBe("pt-BR");
+  });
+
+  it("ignores an unsupported language", async () => {
+    const fake = createI18n("en");
+
+    await setAppLanguage("fr", asI18n(fake));
+
+    expect(setLanguage).not.toHaveBeenCalled();
+    expect(fake.changeLanguage).not.toHaveBeenCalled();
   });
 });
 
 describe("updateAppLanguage", () => {
-  it("restores a stored language into storage, i18n and document.lang", () => {
-    localStorage.setItem(LOCAL_STORAGE_KEYS.LANGUAGE, "pt-BR");
+  it("restores the stored language from the main process", async () => {
+    getPreferences.mockResolvedValue({ language: "pt-BR", theme: "system" });
     const fake = createI18n("en");
 
-    updateAppLanguage(asI18n(fake));
+    await updateAppLanguage(asI18n(fake));
 
+    expect(getPreferences).toHaveBeenCalledTimes(1);
     expect(fake.changeLanguage).toHaveBeenCalledWith("pt-BR");
     expect(fake.language).toBe("pt-BR");
     expect(document.documentElement.lang).toBe("pt-BR");
-  });
-
-  it("still exposes i18n.language when nothing is stored", () => {
-    const fake = createI18n("en");
-
-    updateAppLanguage(asI18n(fake));
-
-    expect(fake.changeLanguage).not.toHaveBeenCalled();
-    expect(document.documentElement.lang).toBe("en");
   });
 });
