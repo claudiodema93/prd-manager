@@ -1,7 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { setAppLanguage } from "@/actions/language";
-import { setTheme as applyTheme, getThemeState } from "@/actions/theme";
+import {
+  setTheme as applyTheme,
+  getThemeState,
+  subscribeToTheme,
+} from "@/actions/theme";
 import ContentSection from "@/components/settings/content-section";
 import LanguageSelector from "@/components/settings/language-selector";
 import ThemeSelector from "@/components/settings/theme-selector";
@@ -11,13 +15,26 @@ import { isThemeSource, type ThemeSource } from "@/types/theme-mode";
 export default function DisplaySettingPage() {
   const { t, i18n } = useTranslation();
   const [themeSource, setThemeSource] = useState<ThemeSource>("system");
+  // Guards the initial read: if the user picks a theme before it resolves, the
+  // late response must not overwrite the newer selection.
+  const hasSelectedTheme = useRef(false);
 
   useEffect(() => {
     let active = true;
+    let receivedThemeChange = false;
+    const unsubscribe = subscribeToTheme((state) => {
+      receivedThemeChange = true;
+
+      if (active) {
+        setThemeSource(state.source);
+      }
+    });
 
     getThemeState()
       .then((state) => {
-        if (active) {
+        // A notification (from this page or the header) that arrives before
+        // this read resolves is newer than the read itself.
+        if (active && !hasSelectedTheme.current && !receivedThemeChange) {
           setThemeSource(state.source);
         }
       })
@@ -27,6 +44,7 @@ export default function DisplaySettingPage() {
 
     return () => {
       active = false;
+      unsubscribe();
     };
   }, []);
 
@@ -35,6 +53,7 @@ export default function DisplaySettingPage() {
       return;
     }
 
+    hasSelectedTheme.current = true;
     applyTheme(next)
       .then((state) => {
         setThemeSource(state.source);

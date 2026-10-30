@@ -42,6 +42,7 @@ const preferencesState = vi.hoisted(() => ({
     trashDirectory: null as string | null,
   },
   language: "it" as const,
+  setLanguage: vi.fn(),
   setTheme: vi.fn(),
 }));
 
@@ -58,6 +59,7 @@ vi.mock("@/preferences/store", () => ({
     };
   },
   setLanguagePreference: (language: "it") => {
+    preferencesState.setLanguage(language);
     preferencesState.language = language;
   },
   setThemePreference: preferencesState.setTheme,
@@ -108,6 +110,7 @@ beforeEach(() => {
     trashDirectory: null,
   };
   preferencesState.language = "it";
+  preferencesState.setLanguage.mockReset();
   preferencesState.setTheme.mockReset();
 });
 
@@ -243,6 +246,8 @@ describe("preferences handlers", () => {
     });
 
     expect(preferencesState.language).toBe("it");
+    // The state already starts as "it", so only the call proves persistence.
+    expect(preferencesState.setLanguage).toHaveBeenCalledWith("it");
   });
 
   it("rejects an unsupported language without persisting it", async () => {
@@ -251,6 +256,7 @@ describe("preferences handlers", () => {
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
 
     expect(preferencesState.language).toBe("it");
+    expect(preferencesState.setLanguage).not.toHaveBeenCalled();
   });
 });
 

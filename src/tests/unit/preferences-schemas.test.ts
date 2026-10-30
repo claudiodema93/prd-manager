@@ -12,6 +12,7 @@ import {
   DEFAULT_WINDOW_STATE,
   directoryPreferenceSchema,
   folderPreferencesSchema,
+  MAX_DIRECTORY_PATH_LENGTH,
 } from "@/preferences/schema";
 import { DEFAULT_FOLDER_PREFERENCES } from "@/types/preferences";
 
@@ -47,6 +48,40 @@ describe("preferences schemas", () => {
         extra: true,
       })
     ).toEqual(DEFAULT_APP_PREFERENCES);
+  });
+
+  it("normalizes languages written by older releases", () => {
+    for (const legacyLanguage of ["en", "pt-BR"]) {
+      const parsed = appPreferencesSchema.parse({
+        ...DEFAULT_APP_PREFERENCES,
+        language: legacyLanguage,
+        theme: "dark",
+        window: { height: 700, isMaximized: true, width: 900 },
+      });
+
+      expect(parsed.language).toBe("it");
+      expect(parsed.theme).toBe("dark");
+      expect(parsed.window).toEqual({
+        height: 700,
+        isMaximized: true,
+        width: 900,
+      });
+    }
+  });
+
+  it("keeps unrelated preferences when folders are malformed", () => {
+    const parsed = appPreferencesSchema.parse({
+      ...DEFAULT_APP_PREFERENCES,
+      folders: {
+        articlesDirectory: "relative/articles",
+        issuesDirectory: null,
+        trashDirectory: null,
+      },
+      theme: "dark",
+    });
+
+    expect(parsed.folders).toEqual(DEFAULT_FOLDER_PREFERENCES);
+    expect(parsed.theme).toBe("dark");
   });
 
   it("validates the preferences output shape", () => {
@@ -87,13 +122,27 @@ describe("folder preference schemas", () => {
     expect(
       directoryPreferenceSchema.safeParse("relative/articles").success
     ).toBe(false);
-    expect(
-      directoryPreferenceSchema.safeParse("\\\\server\\share").success
-    ).toBe(false);
+    for (const uncPath of [
+      "\\\\server\\share",
+      "//server/share",
+      "\\\\?\\C:\\dir",
+      "//?/C:/dir",
+      "\\\\.\\pipe\\name",
+    ]) {
+      expect(directoryPreferenceSchema.safeParse(uncPath).success).toBe(false);
+    }
     expect(
       directoryPreferenceSchema.safeParse("/tmp/artic\u0000les").success
     ).toBe(false);
     expect(directoryPreferenceSchema.safeParse("").success).toBe(false);
+  });
+
+  it("enforces the directory length boundary", () => {
+    const maximum = `/${"a".repeat(MAX_DIRECTORY_PATH_LENGTH - 1)}`;
+    const tooLong = `/${"a".repeat(MAX_DIRECTORY_PATH_LENGTH)}`;
+
+    expect(directoryPreferenceSchema.safeParse(maximum).success).toBe(true);
+    expect(directoryPreferenceSchema.safeParse(tooLong).success).toBe(false);
   });
 
   it("validates a complete folder set", () => {

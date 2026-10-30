@@ -56,6 +56,7 @@ const preferencesState = vi.hoisted(() => ({
     trashDirectory: null as string | null,
   },
   language: "it" as const,
+  setLanguage: vi.fn(),
   setTheme: vi.fn(),
 }));
 
@@ -72,6 +73,7 @@ vi.mock("@/preferences/store", () => ({
     };
   },
   setLanguagePreference: (language: "it") => {
+    preferencesState.setLanguage(language);
     preferencesState.language = language;
   },
   setThemePreference: preferencesState.setTheme,
@@ -108,6 +110,7 @@ beforeEach(() => {
     trashDirectory: null,
   };
   preferencesState.language = "it";
+  preferencesState.setLanguage.mockReset();
   preferencesState.setTheme.mockReset();
 
   sqlite = new Database(":memory:");
@@ -188,9 +191,14 @@ describe("production IPC router", () => {
       theme: "system",
     });
 
+    // The stored value never changes with a single locale, so the call itself
+    // is what proves persistence.
+    expect(preferencesState.setLanguage).toHaveBeenCalledWith("it");
+
     await expect(
       client.preferences.setLanguage({ language: "en" } as never)
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(preferencesState.setLanguage).toHaveBeenCalledTimes(1);
   });
 
   it("serves and persists folders over the wire", async () => {
@@ -219,12 +227,46 @@ describe("production IPC router", () => {
       articlesDirectory: "/tmp/articles",
     });
 
+    // Clearing crosses the transport too.
     await expect(
       client.preferences.setFolder({
-        directory: "relative/articles",
+        directory: null,
         key: "articlesDirectory",
       })
+    ).resolves.toEqual(emptyFolders);
+
+    await expect(client.preferences.getFolders()).resolves.toEqual(
+      emptyFolders
+    );
+
+    await Promise.all(
+      [
+        "relative/articles",
+        "",
+        "/tmp/artic\u0000les",
+        "//server/share",
+        "\\\\server\\share",
+      ].map((directory) =>
+        expect(
+          client.preferences.setFolder({
+            directory,
+            key: "articlesDirectory",
+          })
+        ).rejects.toMatchObject({ code: "BAD_REQUEST" })
+      )
+    );
+
+    await expect(
+      client.preferences.setFolder({
+        directory: "/tmp/articles",
+        key: "downloadsDirectory",
+      } as never)
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+    // Rejected writes must not touch the stored value.
+    await expect(client.preferences.getFolders()).resolves.toEqual(
+      emptyFolders
+    );
   });
 
   it("persists theme changes made through the theme namespace", async () => {

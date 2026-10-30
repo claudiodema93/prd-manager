@@ -33,7 +33,12 @@ export default function ThemeSelector({ onChange, value }: ThemeSelectorProps) {
   }
 
   return (
-    <ToggleGroup onValueChange={handleValueChange} type="single" value={value}>
+    <ToggleGroup
+      aria-label={t("themeLabel")}
+      onValueChange={handleValueChange}
+      type="single"
+      value={value}
+    >
       {THEME_OPTIONS.map((option) => {
         const Icon = option.icon;
 

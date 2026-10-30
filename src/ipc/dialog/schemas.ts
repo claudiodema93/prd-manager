@@ -1,5 +1,6 @@
 import path from "node:path";
 import { z } from "zod";
+import { isUncOrDevicePath } from "@/utils/path-safety";
 
 const MAX_TEXT_LENGTH = 256;
 const MAX_PATH_LENGTH = 4096;
@@ -33,7 +34,7 @@ const defaultPathSchema = z
   .refine((value) => path.isAbsolute(value), {
     message: "defaultPath must be absolute",
   })
-  .refine((value) => !value.startsWith("\\\\"), {
+  .refine((value) => !isUncOrDevicePath(value), {
     message: "UNC paths are not supported",
   });
 

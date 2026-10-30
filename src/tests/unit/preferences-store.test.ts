@@ -183,14 +183,50 @@ describe("preferences store", () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
-  it("loads folder defaults from a legacy preferences file", async () => {
+  it("swallows a failed folder write and keeps the previous value", async () => {
+    const store = await loadStore();
+    store.initializePreferences();
+
+    const articles = path.join(tempDir, "articles");
+    store.setFolderPreference("articlesDirectory", articles);
+
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const set = vi.spyOn(Store.prototype, "set").mockImplementation(() => {
+      throw new Error("disk full");
+    });
+
+    expect(() =>
+      store.setFolderPreference(
+        "articlesDirectory",
+        path.join(tempDir, "other")
+      )
+    ).not.toThrow();
+    expect(store.getFoldersPreference().articlesDirectory).toBe(articles);
+    expect(error).toHaveBeenCalledTimes(1);
+
+    set.mockRestore();
+  });
+
+  it("ignores folder writes before initialisation", async () => {
+    const store = await loadStore();
+
+    store.setFolderPreference("articlesDirectory", "/tmp/articles");
+
+    expect(store.getFoldersPreference()).toEqual(EXPECTED_DEFAULTS.folders);
+  });
+
+  it("loads a legacy preferences file without discarding its values", async () => {
     fs.mkdirSync(preferencesDir, { recursive: true });
+    // Written by a release that still shipped the "en" locale and had no
+    // folders key. Neither change may wipe the theme or window state.
     fs.writeFileSync(
       preferencesFile(),
       JSON.stringify({
-        language: "it",
+        language: "en",
         theme: "dark",
-        window: { height: 600, isMaximized: false, width: 800 },
+        window: { height: 700, isMaximized: true, width: 900 },
       })
     );
 
@@ -201,7 +237,7 @@ describe("preferences store", () => {
       folders: EXPECTED_DEFAULTS.folders,
       language: "it",
       theme: "dark",
-      window: EXPECTED_DEFAULTS.window,
+      window: { height: 700, isMaximized: true, width: 900 },
     });
   });
 

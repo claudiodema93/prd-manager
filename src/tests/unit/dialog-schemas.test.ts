@@ -126,10 +126,17 @@ describe("openFileDialogInputSchema", () => {
       openFileDialogInputSchema.safeParse({ defaultPath: "relative/dir" })
         .success
     ).toBe(false);
-    expect(
-      openFileDialogInputSchema.safeParse({ defaultPath: "\\\\server\\share" })
-        .success
-    ).toBe(false);
+    for (const uncPath of [
+      "\\\\server\\share",
+      "//server/share",
+      "\\\\?\\C:\\dir",
+      "//?/C:/dir",
+      "\\\\.\\pipe\\name",
+    ]) {
+      expect(
+        openFileDialogInputSchema.safeParse({ defaultPath: uncPath }).success
+      ).toBe(false);
+    }
     expect(
       openFileDialogInputSchema.safeParse({ defaultPath: "/tmp/dir" }).success
     ).toBe(true);
