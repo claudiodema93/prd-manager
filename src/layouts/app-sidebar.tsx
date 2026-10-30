@@ -1,6 +1,12 @@
 import { Link, useLocation } from "@tanstack/react-router";
 import { cn } from "cn";
-import { BookOpen, House, Layers, LayoutDashboard } from "lucide-react";
+import {
+  BookOpen,
+  House,
+  Layers,
+  LayoutDashboard,
+  Settings,
+} from "lucide-react";
 import type { ComponentProps } from "react";
 import { useTranslation } from "react-i18next";
 import ExternalLink from "@/components/external-link";
@@ -87,6 +93,23 @@ export default function AppSidebar({
                     >
                       <Layers />
                       <span>{t("titleSecondPage")}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname.startsWith("/settings")}
+                    tooltip={t("settings")}
+                  >
+                    <Link
+                      aria-current={
+                        pathname.startsWith("/settings") ? "page" : undefined
+                      }
+                      to="/settings"
+                    >
+                      <Settings />
+                      <span>{t("settings")}</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

@@ -77,14 +77,15 @@ without per-row JS. Upsert is a patch: omitted keeps, explicit `null` clears,
 `createdAt` never changes. After schema edits, regenerate and commit `drizzle/`
 (snapshots included) — CI fails on drift.
 
-**Preferences.** Theme, language and window state live in a main-process
-electron-store file (`preferences.json`). The renderer reaches language through
-the `preferences` namespace; theme still uses the `theme` namespace, whose
-handlers persist to the same store. electron-store is ESM-only and is bundled
-into the CJS main bundle — keep it in `dependencies` but do not externalise it,
-and never import it in the renderer. The store refuses symlinks, non-regular
-files and files over 64 KiB, writes `0600`, and honours `APP_PREFERENCES_DIR`
-(absolute) only in development/E2E builds.
+**Preferences.** Theme, language, folder directories and window state live in a
+main-process electron-store file (`preferences.json`). The renderer reaches
+language and folder directories through the `preferences` namespace
+(`actions/language.ts`, `actions/folders.ts`); theme still uses the `theme`
+namespace, whose handlers persist to the same store. electron-store is ESM-only
+and is bundled into the CJS main bundle — keep it in `dependencies` but do not
+externalise it, and never import it in the renderer. The store refuses symlinks,
+non-regular files and files over 64 KiB, writes `0600`, and honours
+`APP_PREFERENCES_DIR` (absolute) only in development/E2E builds.
 
 **Dialogs.** `dialog.openFile` and `dialog.openDirectory` wrap
 `dialog.showOpenDialog` in the main process, parented to the main window.
@@ -95,8 +96,10 @@ extensions are normalised (`.png`/`*.png` → `png`). The renderer calls
 `actions/dialog.ts`. Native dialogs are not covered by e2e tests.
 
 **Renderer.** React Compiler is on, so write plain components without reflexive
-`useMemo`/`useCallback`. UI strings via `t()`: add keys to both `en` and `pt-BR`
-in `localization/i18n.ts` (and the language to `langs.ts`). Theme is three-state
+`useMemo`/`useCallback`. UI strings via `t()`: add keys to
+`localization/resources/it.ts` (the keys define the typed `TranslationKey`) and,
+for a new language, copy that file to `resources/<code>.ts`, register it in
+`localization/i18n.ts`, and add it to `langs.ts`. Theme is three-state
 and owned by `nativeTheme` in main; the renderer mirrors `.dark` and follows
 `matchMedia` in `system` mode — go through `actions/theme.ts`. Use `cn()` from
 the `cn` package (re-exported by `utils/cn.ts`) for conditional classes.

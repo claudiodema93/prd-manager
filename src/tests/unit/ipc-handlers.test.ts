@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appVersion, currentPlatfom } from "@/ipc/app/handlers";
 import { ipcContext } from "@/ipc/context";
 import { logRpcError } from "@/ipc/handler";
-import { getPreferences, setLanguage } from "@/ipc/preferences/handlers";
+import {
+  getFolders,
+  getPreferences,
+  setFolder,
+  setLanguage,
+} from "@/ipc/preferences/handlers";
 import { openExternalLink } from "@/ipc/shell/handlers";
 import {
   getCurrentThemeMode,
@@ -31,13 +36,28 @@ const electronState = vi.hoisted(() => ({
 }));
 
 const preferencesState = vi.hoisted(() => ({
-  language: "en" as "en" | "pt-BR",
+  folders: {
+    articlesDirectory: null as string | null,
+    issuesDirectory: null as string | null,
+    trashDirectory: null as string | null,
+  },
+  language: "it" as const,
   setTheme: vi.fn(),
 }));
 
 vi.mock("@/preferences/store", () => ({
+  getFoldersPreference: () => ({ ...preferencesState.folders }),
   getLanguagePreference: () => preferencesState.language,
-  setLanguagePreference: (language: "en" | "pt-BR") => {
+  setFolderPreference: (
+    key: "articlesDirectory" | "issuesDirectory" | "trashDirectory",
+    directory: string | null
+  ) => {
+    preferencesState.folders = {
+      ...preferencesState.folders,
+      [key]: directory,
+    };
+  },
+  setLanguagePreference: (language: "it") => {
     preferencesState.language = language;
   },
   setThemePreference: preferencesState.setTheme,
@@ -82,7 +102,12 @@ beforeEach(() => {
   electronState.systemDark = false;
   electronState.openExternal.mockReset();
   electronState.openExternal.mockResolvedValue(undefined);
-  preferencesState.language = "en";
+  preferencesState.folders = {
+    articlesDirectory: null,
+    issuesDirectory: null,
+    trashDirectory: null,
+  };
+  preferencesState.language = "it";
   preferencesState.setTheme.mockReset();
 });
 
@@ -202,30 +227,68 @@ describe("theme handlers", () => {
 
 describe("preferences handlers", () => {
   it("returns the stored language and the current theme", async () => {
-    preferencesState.language = "pt-BR";
+    preferencesState.language = "it";
     electronState.themeSource = "dark";
 
     await expect(call(getPreferences, undefined)).resolves.toEqual({
-      language: "pt-BR",
+      language: "it",
       theme: "dark",
     });
   });
 
   it("persists a supported language", async () => {
-    await expect(call(setLanguage, { language: "pt-BR" })).resolves.toEqual({
-      language: "pt-BR",
+    await expect(call(setLanguage, { language: "it" })).resolves.toEqual({
+      language: "it",
       theme: "system",
     });
 
-    expect(preferencesState.language).toBe("pt-BR");
+    expect(preferencesState.language).toBe("it");
   });
 
   it("rejects an unsupported language without persisting it", async () => {
     await expect(
-      call(setLanguage, { language: "fr" as unknown as "en" })
+      call(setLanguage, { language: "en" as unknown as "it" })
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
 
-    expect(preferencesState.language).toBe("en");
+    expect(preferencesState.language).toBe("it");
+  });
+});
+
+describe("folder handlers", () => {
+  it("returns the stored folders", async () => {
+    preferencesState.folders.articlesDirectory = "/tmp/articles";
+
+    await expect(call(getFolders, undefined)).resolves.toEqual({
+      articlesDirectory: "/tmp/articles",
+      issuesDirectory: null,
+      trashDirectory: null,
+    });
+  });
+
+  it("persists a folder and returns the updated set", async () => {
+    await expect(
+      call(setFolder, {
+        directory: "/tmp/articles",
+        key: "articlesDirectory",
+      })
+    ).resolves.toEqual({
+      articlesDirectory: "/tmp/articles",
+      issuesDirectory: null,
+      trashDirectory: null,
+    });
+
+    expect(preferencesState.folders.articlesDirectory).toBe("/tmp/articles");
+  });
+
+  it("rejects a relative folder path without persisting it", async () => {
+    await expect(
+      call(setFolder, {
+        directory: "relative/articles",
+        key: "articlesDirectory",
+      })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+    expect(preferencesState.folders.articlesDirectory).toBeNull();
   });
 });
 

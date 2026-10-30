@@ -5,6 +5,10 @@ describe("getPageTitleKey", () => {
   it("maps the known routes to their title keys", () => {
     expect(getPageTitleKey("/")).toBe("titleHomePage");
     expect(getPageTitleKey("/second")).toBe("titleSecondPage");
+    expect(getPageTitleKey("/settings")).toBe("titleSettings");
+    expect(getPageTitleKey("/settings/")).toBe("titleSettings");
+    expect(getPageTitleKey("/settings/display")).toBe("titleSettingsDisplay");
+    expect(getPageTitleKey("/settings/folders")).toBe("titleSettingsFolders");
   });
 
   it("falls back to the application name for unknown paths", () => {

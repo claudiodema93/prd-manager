@@ -11,6 +11,10 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SecondRouteImport } from './routes/second'
+import { Route as SettingsRouteRouteImport } from './routes/settings/route'
+import { Route as SettingsIndexRouteImport } from './routes/settings/index'
+import { Route as SettingsDisplayRouteImport } from './routes/settings/display'
+import { Route as SettingsFoldersRouteImport } from './routes/settings/folders'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -22,30 +26,75 @@ const SecondRoute = SecondRouteImport.update({
   path: '/second',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsRouteRoute = SettingsRouteRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsDisplayRoute = SettingsDisplayRouteImport.update({
+  id: '/display',
+  path: '/display',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsFoldersRoute = SettingsFoldersRouteImport.update({
+  id: '/folders',
+  path: '/folders',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/settings': typeof SettingsRouteRouteWithChildren
   '/second': typeof SecondRoute
+  '/settings/display': typeof SettingsDisplayRoute
+  '/settings/folders': typeof SettingsFoldersRoute
+  '/settings/': typeof SettingsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/second': typeof SecondRoute
+  '/settings/display': typeof SettingsDisplayRoute
+  '/settings/folders': typeof SettingsFoldersRoute
+  '/settings': typeof SettingsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/settings': typeof SettingsRouteRouteWithChildren
   '/second': typeof SecondRoute
+  '/settings/display': typeof SettingsDisplayRoute
+  '/settings/folders': typeof SettingsFoldersRoute
+  '/settings/': typeof SettingsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/second'
+  fullPaths:
+    | '/'
+    | '/settings'
+    | '/second'
+    | '/settings/display'
+    | '/settings/folders'
+    | '/settings/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/second'
-  id: '__root__' | '/' | '/second'
+  to: '/' | '/second' | '/settings/display' | '/settings/folders' | '/settings'
+  id:
+    | '__root__'
+    | '/'
+    | '/settings'
+    | '/second'
+    | '/settings/display'
+    | '/settings/folders'
+    | '/settings/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  SettingsRouteRoute: typeof SettingsRouteRouteWithChildren
   SecondRoute: typeof SecondRoute
 }
 
@@ -65,11 +114,56 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SecondRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/': {
+      id: '/settings/'
+      path: '/'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/display': {
+      id: '/settings/display'
+      path: '/display'
+      fullPath: '/settings/display'
+      preLoaderRoute: typeof SettingsDisplayRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/folders': {
+      id: '/settings/folders'
+      path: '/folders'
+      fullPath: '/settings/folders'
+      preLoaderRoute: typeof SettingsFoldersRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
   }
 }
 
+interface SettingsRouteRouteChildren {
+  SettingsDisplayRoute: typeof SettingsDisplayRoute
+  SettingsFoldersRoute: typeof SettingsFoldersRoute
+  SettingsIndexRoute: typeof SettingsIndexRoute
+}
+
+const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
+  SettingsDisplayRoute: SettingsDisplayRoute,
+  SettingsFoldersRoute: SettingsFoldersRoute,
+  SettingsIndexRoute: SettingsIndexRoute,
+}
+
+const SettingsRouteRouteWithChildren = SettingsRouteRoute._addFileChildren(
+  SettingsRouteRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  SettingsRouteRoute: SettingsRouteRouteWithChildren,
   SecondRoute: SecondRoute,
 }
 export const routeTree = rootRouteImport

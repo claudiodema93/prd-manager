@@ -113,10 +113,10 @@ better-sqlite3 + Drizzle, with migrations applied on startup.
 
 ### Preferences
 
-`src/preferences/` wraps electron-store in the main process for the three user
-preferences: theme, language and window state (`preferences.json` in `userData`). The
-package is ESM-only and is bundled into the CJS main bundle; keep it in `dependencies`
-but never import it from the renderer.
+`src/preferences/` wraps electron-store in the main process for the user
+preferences: theme, language, folder directories and window state (`preferences.json` in
+`userData`). The package is ESM-only and is bundled into the CJS main bundle; keep it in
+`dependencies` but never import it from the renderer.
 
 - `src/preferences/schema.ts` holds the zod schemas used by the IPC layer and the JSON
   Schema electron-store validates against.
@@ -124,9 +124,10 @@ but never import it from the renderer.
   when the file cannot be read. It refuses symlinks, non-regular files and files over 64 KiB,
   writes `0600`, and honours `APP_PREFERENCES_DIR` (absolute) only in development/E2E builds.
 - Theme is applied to `nativeTheme.themeSource` before the window is created and persisted
-  by the theme handlers. Language is exposed through the `preferences` oRPC namespace.
-  Window bounds are restored in `createWindow` and saved on a debounce from
-  `resize`/`move`, plus `maximize`, `unmaximize` and `close`.
+  by the theme handlers. Language and the folder directories are exposed through the
+  `preferences` oRPC namespace (`getFolders`/`setFolder`). Window bounds are restored in
+  `createWindow` and saved on a debounce from `resize`/`move`, plus `maximize`, `unmaximize`
+  and `close`.
 
 ### Dialogs
 
@@ -170,9 +171,12 @@ is in `index.html`.
 
 Theme is three-state (`light`/`dark`/`system`) owned by `nativeTheme` in the main process; the
 renderer mirrors the result onto `document.documentElement.classList` and, in `system` mode,
-follows `matchMedia` so OS changes apply live. Language resources are inline in
-`src/localization/i18n.ts` (en, pt-BR), the language list is `src/localization/langs.ts`, and both
-theme and language preferences persist in electron-store (`src/preferences/`), not `localStorage`.
+follows `matchMedia` so OS changes apply live. Each language lives in
+`src/localization/resources/<code>.ts` (currently `it.ts`, whose keys also define the typed
+`TranslationKey`), registered in `src/localization/i18n.ts`; the language list is
+`src/localization/langs.ts`. To add a language, copy `resources/it.ts` to a new file with the same
+keys, register it in `i18n.ts`, and add its entry to `langs.ts`. Both theme and language
+preferences persist in electron-store (`src/preferences/`), not `localStorage`.
 
 ## Code style
 

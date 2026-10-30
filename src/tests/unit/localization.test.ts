@@ -23,7 +23,7 @@ describe("language configuration", () => {
 
 describe("translation resources", () => {
   it("defines the same keys in every locale", () => {
-    const reference = translationKeys("en");
+    const reference = translationKeys("it");
 
     expect(reference.length).toBeGreaterThan(0);
 

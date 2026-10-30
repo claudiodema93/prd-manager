@@ -46,7 +46,7 @@ test("persists theme, language and window state", async () => {
 
     await expect.poll(() => readPreferences(preferencesDir)).not.toBeNull();
 
-    const languageButton = page.getByRole("radio", { name: "PT-BR" });
+    const languageButton = page.getByRole("radio", { name: "IT" });
     await expect(languageButton).toBeVisible();
     await languageButton.click();
 
@@ -56,7 +56,7 @@ test("persists theme, language and window state", async () => {
 
     await expect
       .poll(() => readPreferences(preferencesDir)?.language)
-      .toBe("pt-BR");
+      .toBe("it");
     await expect
       .poll(() => readPreferences(preferencesDir)?.theme)
       .not.toBe("system");
@@ -90,10 +90,8 @@ test("persists theme, language and window state", async () => {
 
     const restoredPage = await app.firstWindow();
 
-    await expect(
-      restoredPage.getByRole("radio", { name: "PT-BR" })
-    ).toBeChecked();
-    await expect(restoredPage.locator("html")).toHaveAttribute("lang", "pt-BR");
+    await expect(restoredPage.getByRole("radio", { name: "IT" })).toBeChecked();
+    await expect(restoredPage.locator("html")).toHaveAttribute("lang", "it");
 
     if (storedTheme === "dark") {
       await expect(restoredPage.locator("html")).toHaveClass(

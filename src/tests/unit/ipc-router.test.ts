@@ -50,13 +50,28 @@ vi.mock("electron", () => ({
 }));
 
 const preferencesState = vi.hoisted(() => ({
-  language: "en" as "en" | "pt-BR",
+  folders: {
+    articlesDirectory: null as string | null,
+    issuesDirectory: null as string | null,
+    trashDirectory: null as string | null,
+  },
+  language: "it" as const,
   setTheme: vi.fn(),
 }));
 
 vi.mock("@/preferences/store", () => ({
+  getFoldersPreference: () => ({ ...preferencesState.folders }),
   getLanguagePreference: () => preferencesState.language,
-  setLanguagePreference: (language: "en" | "pt-BR") => {
+  setFolderPreference: (
+    key: "articlesDirectory" | "issuesDirectory" | "trashDirectory",
+    directory: string | null
+  ) => {
+    preferencesState.folders = {
+      ...preferencesState.folders,
+      [key]: directory,
+    };
+  },
+  setLanguagePreference: (language: "it") => {
     preferencesState.language = language;
   },
   setThemePreference: preferencesState.setTheme,
@@ -87,7 +102,12 @@ beforeEach(() => {
     canceled: false,
     filePaths: ["/tmp/picked.txt"],
   });
-  preferencesState.language = "en";
+  preferencesState.folders = {
+    articlesDirectory: null,
+    issuesDirectory: null,
+    trashDirectory: null,
+  };
+  preferencesState.language = "it";
   preferencesState.setTheme.mockReset();
 
   sqlite = new Database(":memory:");
@@ -155,18 +175,56 @@ describe("production IPC router", () => {
 
   it("serves and persists preferences over the wire", async () => {
     await expect(client.preferences.getPreferences()).resolves.toEqual({
-      language: "en",
+      language: "it",
       theme: "system",
     });
 
     await expect(
-      client.preferences.setLanguage({ language: "pt-BR" })
-    ).resolves.toEqual({ language: "pt-BR", theme: "system" });
+      client.preferences.setLanguage({ language: "it" })
+    ).resolves.toEqual({ language: "it", theme: "system" });
 
     await expect(client.preferences.getPreferences()).resolves.toEqual({
-      language: "pt-BR",
+      language: "it",
       theme: "system",
     });
+
+    await expect(
+      client.preferences.setLanguage({ language: "en" } as never)
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("serves and persists folders over the wire", async () => {
+    const emptyFolders = {
+      articlesDirectory: null,
+      issuesDirectory: null,
+      trashDirectory: null,
+    };
+
+    await expect(client.preferences.getFolders()).resolves.toEqual(
+      emptyFolders
+    );
+
+    await expect(
+      client.preferences.setFolder({
+        directory: "/tmp/articles",
+        key: "articlesDirectory",
+      })
+    ).resolves.toEqual({
+      ...emptyFolders,
+      articlesDirectory: "/tmp/articles",
+    });
+
+    await expect(client.preferences.getFolders()).resolves.toEqual({
+      ...emptyFolders,
+      articlesDirectory: "/tmp/articles",
+    });
+
+    await expect(
+      client.preferences.setFolder({
+        directory: "relative/articles",
+        key: "articlesDirectory",
+      })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 
   it("persists theme changes made through the theme namespace", async () => {

@@ -1,6 +1,8 @@
-import { getPreferences, setLanguage } from "./handlers";
+import { getFolders, getPreferences, setFolder, setLanguage } from "./handlers";
 
 export const preferences = {
+  getFolders,
   getPreferences,
+  setFolder,
   setLanguage,
 };

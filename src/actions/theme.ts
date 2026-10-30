@@ -37,6 +37,14 @@ export async function toggleTheme(): Promise<ThemeState> {
   return state;
 }
 
+/**
+ * Reads the theme configured in the main process without applying it; the
+ * display page only needs the current source to render its selector.
+ */
+export function getThemeState(): Promise<ThemeState> {
+  return ipc.client.theme.getCurrentThemeMode();
+}
+
 export async function syncTheme(): Promise<ThemeState> {
   // The main process already restored the stored theme before the window was
   // created, so the renderer only mirrors that state onto the document.
