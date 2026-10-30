@@ -91,7 +91,8 @@ non-regular files and files over 64 KiB, writes `0600`, and honours
 `dialog.showOpenDialog` in the main process, parented to the main window.
 `openFile` accepts `title`, `defaultPath`, `buttonLabel`, `filters`, `multiple`
 and `showHiddenFiles`; `openDirectory` accepts the same without `filters`.
-Inputs are strict and bounded; `defaultPath` must be absolute and non-UNC, and
+Inputs are strict and bounded; `defaultPath` must be absolute and must not use the Win32 device
+namespace (network shares are allowed), and
 extensions are normalised (`.png`/`*.png` → `png`). The renderer calls
 `actions/dialog.ts`. Native dialogs are not covered by e2e tests.
 

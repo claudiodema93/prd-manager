@@ -118,18 +118,22 @@ describe("folder preference schemas", () => {
     expect(directoryPreferenceSchema.safeParse(null).success).toBe(true);
   });
 
-  it("rejects relative, UNC, NUL and empty directory values", () => {
+  it("accepts network shares and rejects relative, device, NUL and empty values", () => {
+    expect(directoryPreferenceSchema.safeParse("//server/share").success).toBe(
+      true
+    );
     expect(
       directoryPreferenceSchema.safeParse("relative/articles").success
     ).toBe(false);
-    for (const uncPath of [
-      "\\\\server\\share",
-      "//server/share",
+    for (const devicePath of [
       "\\\\?\\C:\\dir",
       "//?/C:/dir",
       "\\\\.\\pipe\\name",
+      "//./pipe/name",
     ]) {
-      expect(directoryPreferenceSchema.safeParse(uncPath).success).toBe(false);
+      expect(directoryPreferenceSchema.safeParse(devicePath).success).toBe(
+        false
+      );
     }
     expect(
       directoryPreferenceSchema.safeParse("/tmp/artic\u0000les").success

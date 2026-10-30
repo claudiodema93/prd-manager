@@ -7,7 +7,7 @@ import {
   type FolderPreferences,
 } from "@/types/preferences";
 import { THEME_SOURCES, type ThemeSource } from "@/types/theme-mode";
-import { isUncOrDevicePath } from "@/utils/path-safety";
+import { isDevicePath } from "@/utils/path-safety";
 
 export const WINDOW_MIN_WIDTH = 400;
 export const WINDOW_MIN_HEIGHT = 300;
@@ -64,9 +64,10 @@ export const windowStateSchema = z.object({
     .optional(),
 });
 
-// Same rule as the directory dialog: absolute, NUL-free, non-UNC paths only.
-// Leading and trailing spaces are legitimate in a directory name, so the value
-// is deliberately not trimmed.
+// Same rule as the directory dialog: absolute, NUL-free paths. UNC/network
+// shares (`\\server\share`, `//server/share`) are allowed; Win32 device paths
+// are not. Leading and trailing spaces are legitimate in a directory name, so
+// the value is deliberately not trimmed.
 export const directoryPreferenceSchema = z
   .string()
   .min(1)
@@ -77,8 +78,8 @@ export const directoryPreferenceSchema = z
   .refine((value) => path.isAbsolute(value), {
     message: "must be absolute",
   })
-  .refine((value) => !isUncOrDevicePath(value), {
-    message: "UNC paths are not supported",
+  .refine((value) => !isDevicePath(value), {
+    message: "device paths are not supported",
   })
   .nullable();
 

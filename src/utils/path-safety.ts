@@ -1,9 +1,9 @@
-// Windows accepts UNC and device paths with either separator and they all
-// begin with two leading slashes: `\\server\share`, `//server/share`,
-// `\\?\C:\dir` and `\\.\pipe\name`. Electron's pickers never return them, so
-// they are rejected everywhere a directory path crosses the IPC boundary.
-const UNC_OR_DEVICE_PREFIX = /^[\\/]{2}/u;
+// Network shares are legitimate folder choices (`\\server\share` on Windows,
+// and the equivalent `//server/share` form). The Win32 device namespace is not:
+// `\\?\` and `\\.\` bypass normal path handling and must never be persisted as
+// a folder preference.
+const DEVICE_PATH_PREFIXES = ["\\\\?\\", "\\\\.\\", "//?/", "//./"] as const;
 
-export function isUncOrDevicePath(value: string): boolean {
-  return UNC_OR_DEVICE_PREFIX.test(value);
+export function isDevicePath(value: string): boolean {
+  return DEVICE_PATH_PREFIXES.some((prefix) => value.startsWith(prefix));
 }

@@ -134,7 +134,8 @@ preferences: theme, language, folder directories and window state (`preferences.
 `src/ipc/dialog/` wraps `dialog.showOpenDialog` in the main process, parented to the main window.
 `dialog.openFile` accepts `title`, `defaultPath`, `buttonLabel`, `filters`, `multiple` and
 `showHiddenFiles`; `dialog.openDirectory` accepts the same without `filters`. `defaultPath` must
-be absolute and non-UNC; filter extensions are normalised (`.png`/`*.png` → `png`), and the raw
+be absolute and must not use the Win32 device namespace (network shares such as `\\server\share`
+and `//server/share` are allowed); filter extensions are normalised (`.png`/`*.png` → `png`), and the raw
 Electron `properties` array is not exposed. Both procedures return `{ canceled, filePaths }`.
 Native dialogs are not e2e-tested.
 

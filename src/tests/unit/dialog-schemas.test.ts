@@ -121,22 +121,26 @@ describe("openFileDialogInputSchema", () => {
     ).toBe(false);
   });
 
-  it("requires an absolute, non-UNC defaultPath", () => {
+  it("requires an absolute defaultPath and rejects device paths", () => {
     expect(
       openFileDialogInputSchema.safeParse({ defaultPath: "relative/dir" })
         .success
     ).toBe(false);
-    for (const uncPath of [
-      "\\\\server\\share",
-      "//server/share",
+    for (const devicePath of [
       "\\\\?\\C:\\dir",
       "//?/C:/dir",
       "\\\\.\\pipe\\name",
+      "//./pipe/name",
     ]) {
       expect(
-        openFileDialogInputSchema.safeParse({ defaultPath: uncPath }).success
+        openFileDialogInputSchema.safeParse({ defaultPath: devicePath }).success
       ).toBe(false);
     }
+    // Network shares are valid, including the forward-slash form.
+    expect(
+      openFileDialogInputSchema.safeParse({ defaultPath: "//server/share" })
+        .success
+    ).toBe(true);
     expect(
       openFileDialogInputSchema.safeParse({ defaultPath: "/tmp/dir" }).success
     ).toBe(true);

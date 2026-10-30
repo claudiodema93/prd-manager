@@ -239,13 +239,24 @@ describe("production IPC router", () => {
       emptyFolders
     );
 
+    // Network shares are valid folder choices.
+    await expect(
+      client.preferences.setFolder({
+        directory: "//server/share",
+        key: "articlesDirectory",
+      })
+    ).resolves.toEqual({
+      ...emptyFolders,
+      articlesDirectory: "//server/share",
+    });
+
     await Promise.all(
       [
         "relative/articles",
         "",
         "/tmp/artic\u0000les",
-        "//server/share",
-        "\\\\server\\share",
+        "//?/C:/dir",
+        "//./pipe/name",
       ].map((directory) =>
         expect(
           client.preferences.setFolder({
@@ -264,9 +275,10 @@ describe("production IPC router", () => {
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
 
     // Rejected writes must not touch the stored value.
-    await expect(client.preferences.getFolders()).resolves.toEqual(
-      emptyFolders
-    );
+    await expect(client.preferences.getFolders()).resolves.toEqual({
+      ...emptyFolders,
+      articlesDirectory: "//server/share",
+    });
   });
 
   it("persists theme changes made through the theme namespace", async () => {
