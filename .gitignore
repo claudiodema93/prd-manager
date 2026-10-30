@@ -113,3 +113,6 @@ out/
 *.db-shm
 *.db-wal
 *.corrupt-*
+
+# Generated knowledge graph (graphify)
+graphify-out/
