@@ -61,7 +61,9 @@ const isDevelopment = !app.isPackaged;
 
 /** Native background colour, used to avoid a white flash before first paint. */
 function getWindowBackgroundColor() {
-  return nativeTheme.shouldUseDarkColors ? "#1e1e1e" : "#ffffff";
+  // Match the sidebar surface used by the app shell so the native window never
+  // flashes or shows a differently-colored edge while the renderer paints.
+  return nativeTheme.shouldUseDarkColors ? "#171717" : "#fafafa";
 }
 
 function getRendererEntryPath() {

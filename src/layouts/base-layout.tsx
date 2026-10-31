@@ -12,7 +12,11 @@ export default function BaseLayout({
 }) {
   return (
     <TooltipProvider>
-      <div className="flex h-screen flex-col overflow-hidden">
+      {/* The shell uses the sidebar surface as its frame: the drag strip, the
+          inset card's margins and the sidebar itself then share one color, so
+          no seam shows between the title-bar strip and the sidebar (visible in
+          dark mode, where background and sidebar differ). */}
+      <div className="bg-sidebar flex h-screen flex-col overflow-hidden">
         {/* The window is frameless: the drag region stays above the sidebar
             so the whole title-bar strip remains draggable. */}
         <DragWindowRegion title="PrdManager" />
