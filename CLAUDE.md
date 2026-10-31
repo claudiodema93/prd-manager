@@ -71,6 +71,13 @@ will navigate to — that is why production navigation is restricted to the bund
 lives in `src/layouts/` (`base-layout.tsx` owns the `SidebarProvider`, `app-sidebar.tsx` the
 navigation, `site-header.tsx` the header); routes render inside it and stay navigation-free.
 
+**Customers UI**: `/customers` (`src/routes/customers.tsx` → `src/pages/customers/`) is the
+customer list plus a create/edit `Sheet`, a delete `AlertDialog` and a reusable section-definition
+editor. It talks only to `src/actions/customers.ts` and `src/actions/folders.ts`; importing
+`src/customers/**`, `src/ipc/**` (beyond `import type`) or any other main-process module at runtime
+would pull Node globals into the renderer. The backend stays authoritative for key-template
+validation, and the renderer reports its BAD_REQUEST/CONFLICT/PRECONDITION_FAILED/NOT_FOUND failures.
+
 **Renderer → IPC access** always goes through `src/actions/*.ts`, which are thin typed wrappers
 around `ipc.client.<namespace>.<procedure>()`. Components import actions, never `ipc` directly.
 
@@ -106,10 +113,46 @@ better-sqlite3 + Drizzle, with migrations applied on startup.
   `app.asar.unpacked`) so the same code works in dev, in `app.asar` and packaged; Forge ships it
   via `extraResource`.
 - `src/db/schema.ts`: `customers` is keyed by `folderPath`. `searchText` is a pre-folded
-  (NFC + lowercase) concatenation maintained by `upsertCustomer`, so `instr()` searches work
-  without per-row JS.
+  (NFC + lowercase) concatenation maintained by the customer store (`upsertCustomerRow`), so
+  `instr()` searches work without per-row JS.
 - CI fails on schema drift: after changing the schema, run `npm run db:generate` and commit
   `drizzle/` (snapshots included).
+
+### Customers
+
+Customer management is filesystem-first. A customer is a `customer-XXXX` folder
+(code `0001`–`9999`) under the configured `articlesDirectory`; its definition is
+`customer_data.json`, and its articles are direct subfolders containing a minimal
+`article_data.json`. The filesystem is the source of truth and SQLite is a
+disposable **cache**: `customers` is rebuilt by scans, and the parsed definition
+lives in the existing `metadata_json` column (`{ article, revision, articleCount,
+issues[] }`, with `article`/`revision` null for an invalid config). No table was
+added and no schema migration was needed.
+
+- `src/customers/types.ts` — domain types and the cache metadata shape.
+- `src/customers/config.ts` — parse/validate/serialise `customer_data.json`
+  (v1 clean shape; legacy top-level section versions accepted on read only).
+- `src/customers/key-template.ts` — `{NAME}`, `{NAME:00}` and `[...]` grammar and
+  safe file-name rendering.
+- `src/customers/folder.ts` — folder naming, path confinement, article counting,
+  atomic JSON writes and the move-to-trash fallback.
+- `src/customers/scan.ts` — reconciles the cache with the filesystem.
+- `src/customers/crud.ts` — create/update/remove.
+- `src/customers/store.ts` — Drizzle cache-row helpers; `src/customers/lock.ts`
+  serialises scans and mutations; `src/customers/errors.ts` holds the codes.
+
+The main process scans `articlesDirectory` in the background after the window is
+created; `customers.scanCustomers` is the manual refresh. A missing or unreadable
+root leaves the cache untouched. `trashDirectory` is mandatory for deletes and
+`issuesDirectory` is stored/validated but not used by this module.
+
+Guards: the customer code is immutable; deleting is refused while
+`articleCount > 0`; changing `article.key` or `revision.key` is refused once
+articles exist; deletes move the folder to `trashDirectory` (never delete in
+place). The oRPC procedures are `listCustomers`, `getCustomer`, `createCustomer`,
+`updateCustomer`, `removeCustomer`, `scanCustomers` and `clearCustomers` —
+`upsertCustomer` was removed. Mutations validate the filesystem, change it, then
+update the cache row; the scanner and CRUD share a non-re-entrant lock.
 
 ### Preferences
 

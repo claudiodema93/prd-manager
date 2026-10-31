@@ -2,6 +2,7 @@ import type { TranslationKey } from "@/localization/resources/it";
 
 const PAGE_TITLE_KEYS: Record<string, TranslationKey> = {
   "/": "titleHomePage",
+  "/customers": "titleCustomers",
   "/second": "titleSecondPage",
   "/settings": "titleSettings",
   "/settings/": "titleSettings",

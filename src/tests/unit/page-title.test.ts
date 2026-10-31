@@ -4,6 +4,7 @@ import { DEFAULT_PAGE_TITLE_KEY, getPageTitleKey } from "@/utils/page-title";
 describe("getPageTitleKey", () => {
   it("maps the known routes to their title keys", () => {
     expect(getPageTitleKey("/")).toBe("titleHomePage");
+    expect(getPageTitleKey("/customers")).toBe("titleCustomers");
     expect(getPageTitleKey("/second")).toBe("titleSecondPage");
     expect(getPageTitleKey("/settings")).toBe("titleSettings");
     expect(getPageTitleKey("/settings/")).toBe("titleSettings");

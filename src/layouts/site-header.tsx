@@ -11,9 +11,12 @@ export default function SiteHeader(props: ComponentProps<"header">) {
   const { t } = useTranslation();
   const pathname = useLocation({ select: (location) => location.pathname });
 
+  // The header sits inside the rounded SidebarInset: matching the radius on its
+  // own background keeps the card's top corners rounded instead of squaring
+  // them off.
   return (
     <header
-      className="bg-background flex h-14 shrink-0 items-center justify-between gap-2 border-b px-4"
+      className="bg-background flex h-14 shrink-0 items-center justify-between gap-2 rounded-t-xl border-b px-4"
       {...props}
     >
       <div className="flex items-center gap-2">

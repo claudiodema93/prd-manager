@@ -6,6 +6,7 @@ import {
   Layers,
   LayoutDashboard,
   Settings,
+  Users,
 } from "lucide-react";
 import type { ComponentProps } from "react";
 import { useTranslation } from "react-i18next";
@@ -78,6 +79,23 @@ export default function AppSidebar({
                     >
                       <House />
                       <span>{t("titleHomePage")}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname.startsWith("/customers")}
+                    tooltip={t("titleCustomers")}
+                  >
+                    <Link
+                      aria-current={
+                        pathname.startsWith("/customers") ? "page" : undefined
+                      }
+                      to="/customers"
+                    >
+                      <Users />
+                      <span>{t("titleCustomers")}</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

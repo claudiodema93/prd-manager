@@ -22,7 +22,7 @@ export const customers = sqliteTable(
     revisionSchemaVersion: integer("revision_schema_version"),
     schemaVersion: integer("schema_version"),
     // Pre-folded (NFC, lower-cased) concatenation of customer_code, folder_name
-    // and name. Maintained by upsertCustomer so `instr()` searches never need a
+    // and name. Maintained by upsertCustomerRow so `instr()` searches never need a
     // per-row JavaScript function.
     searchText: text("search_text").notNull().default(""),
     status: text("status", { enum: CUSTOMER_STATUSES }).notNull(),

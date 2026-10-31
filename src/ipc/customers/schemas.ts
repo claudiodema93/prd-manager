@@ -1,11 +1,14 @@
 import path from "node:path";
 import { z } from "zod";
-import { CUSTOMER_STATUSES } from "../../constants/customers";
+import { CUSTOMER_STATUSES } from "@/constants/customers";
+import { customerSectionDefinitionSchema } from "@/customers/config";
+import { parseKeyTemplate } from "@/customers/key-template";
+import {
+  CUSTOMER_ISSUE_CODES,
+  MAX_CUSTOMER_ISSUE_MESSAGE_LENGTH,
+} from "@/customers/types";
 
 const MAX_PATH_LENGTH = 4096;
-const MAX_METADATA_DEPTH = 8;
-const MAX_METADATA_NODES = 1000;
-const MAX_METADATA_BYTES = 64 * 1024;
 
 export const customerStatusSchema = z.enum(CUSTOMER_STATUSES);
 
@@ -19,6 +22,44 @@ const customerPathSchema = z
     message: "folderPath must not contain NUL characters.",
   })
   .transform((value) => path.resolve(value));
+
+/**
+ * The section definition schema validates the structure; the key template is
+ * parsed here as well so the IPC boundary also rejects a template that
+ * references an undeclared parameter, lacks a placeholder, or misuses zero
+ * padding.
+ */
+const customerSectionInputSchema = customerSectionDefinitionSchema.superRefine(
+  (section, context) => {
+    try {
+      parseKeyTemplate(section.key, section.parameters);
+    } catch (error) {
+      context.addIssue({
+        code: "custom",
+        message: error instanceof Error ? error.message : String(error),
+        path: ["key"],
+      });
+    }
+  }
+);
+
+export const customerIssueSchema = z
+  .object({
+    code: z.enum(CUSTOMER_ISSUE_CODES),
+    message: z.string().min(1).max(MAX_CUSTOMER_ISSUE_MESSAGE_LENGTH),
+    path: z.string().max(4096).optional(),
+    severity: z.enum(["warning", "error"]),
+  })
+  .strict();
+
+export const customerCacheMetadataSchema = z
+  .object({
+    article: customerSectionInputSchema.nullable(),
+    articleCount: z.number().int().nonnegative(),
+    issues: z.array(customerIssueSchema).max(200),
+    revision: customerSectionInputSchema.nullable(),
+  })
+  .strict();
 
 export const customerFolderPathInputSchema = z
   .object({
@@ -40,112 +81,47 @@ export const listCustomersInputSchema = z
   })
   .strict();
 
-/**
- * Rejects metadata that is too large or too deeply nested to persist safely.
- * Returns a human-readable reason, or `null` when the value is acceptable.
- */
-function findMetadataProblem(value: Record<string, unknown>): string | null {
-  const seen = new WeakSet<object>();
-  let nodes = 0;
-  const stack: Array<{ depth: number; node: unknown }> = [
-    { depth: 0, node: value },
-  ];
-
-  while (stack.length > 0) {
-    const entry = stack.pop();
-
-    if (!entry) {
-      break;
-    }
-
-    const { depth, node } = entry;
-    nodes += 1;
-
-    if (nodes > MAX_METADATA_NODES) {
-      return `metadataJson must contain at most ${MAX_METADATA_NODES} values.`;
-    }
-
-    if (depth > MAX_METADATA_DEPTH) {
-      return `metadataJson must be at most ${MAX_METADATA_DEPTH} levels deep.`;
-    }
-
-    if (typeof node !== "object" || node === null) {
-      continue;
-    }
-
-    if (seen.has(node)) {
-      return "metadataJson must not contain circular references.";
-    }
-
-    seen.add(node);
-
-    const children = Array.isArray(node)
-      ? node
-      : Object.values(node as Record<string, unknown>);
-
-    for (const child of children) {
-      stack.push({ depth: depth + 1, node: child });
-    }
-  }
-
-  let serialized: string;
-
-  try {
-    serialized = JSON.stringify(value);
-  } catch {
-    return "metadataJson must be JSON-serialisable.";
-  }
-
-  if (Buffer.byteLength(serialized, "utf8") > MAX_METADATA_BYTES) {
-    return `metadataJson must be at most ${MAX_METADATA_BYTES / 1024} KiB when serialised.`;
-  }
-
-  return null;
-}
-
-const metadataSchema = z
-  .record(z.string(), z.unknown())
-  .superRefine((value, context) => {
-    const problem = findMetadataProblem(value);
-
-    if (problem) {
-      context.addIssue({ code: "custom", message: problem });
-    }
-  })
-  .nullable()
-  .optional();
-
-export const upsertCustomerInputSchema = z
+export const createCustomerInputSchema = z
   .object({
-    articleSchemaVersion: z.number().int().nonnegative().nullable().optional(),
-    customerCode: z.string().trim().min(1).max(128),
-    folderMtimeMs: z
-      .number()
-      .finite()
-      .nonnegative()
-      .max(Number.MAX_SAFE_INTEGER)
-      .transform(Math.trunc),
-    folderName: z.string().trim().min(1).max(256),
-    folderPath: customerPathSchema,
-    metadataJson: metadataSchema,
-    name: z
+    article: customerSectionInputSchema,
+    customerCode: z
       .string()
-      .trim()
-      .max(256)
-      .transform((value) => (value === "" ? null : value))
-      .nullable()
+      .regex(/^\d{4}$/u)
+      .refine((value) => value !== "0000", {
+        message: "customerCode must be between 0001 and 9999.",
+      })
       .optional(),
-    revisionSchemaVersion: z.number().int().nonnegative().nullable().optional(),
-    schemaVersion: z.number().int().nonnegative().nullable().optional(),
-    status: customerStatusSchema,
+    name: z.string().trim().min(1).max(256),
+    revision: customerSectionInputSchema,
   })
   .strict();
+
+export const updateCustomerInputSchema = z
+  .object({
+    article: customerSectionInputSchema.optional(),
+    folderPath: customerPathSchema,
+    name: z.string().trim().min(1).max(256).optional(),
+    revision: customerSectionInputSchema.optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.name !== undefined ||
+      value.article !== undefined ||
+      value.revision !== undefined,
+    {
+      message: "At least one of name, article or revision is required.",
+    }
+  );
+
+export const scanCustomersInputSchema = z.object({}).strict();
 
 /**
  * Wire-format schemas. `createdAt`/`updatedAt` are epoch milliseconds, never
  * `Date`, because the message-port transport serialises responses as JSON.
  */
 export const customerSummarySchema = z.object({
+  articleCount: z.number().int().nonnegative(),
   articleSchemaVersion: z.number().int().nullable(),
   createdAt: z.number().int().nonnegative(),
   customerCode: z.string(),
@@ -160,7 +136,7 @@ export const customerSummarySchema = z.object({
 });
 
 export const customerSchema = customerSummarySchema.extend({
-  metadataJson: z.record(z.string(), z.unknown()).nullable(),
+  metadataJson: customerCacheMetadataSchema.nullable(),
 });
 
 export const listCustomersOutputSchema = z.object({
@@ -170,8 +146,22 @@ export const listCustomersOutputSchema = z.object({
 
 export const getCustomerOutputSchema = customerSchema.nullable();
 
-export const upsertCustomerOutputSchema = customerSchema;
+export const createCustomerOutputSchema = customerSchema;
+
+export const updateCustomerOutputSchema = customerSchema;
 
 export const removeCustomerOutputSchema = z.string();
 
 export const clearCustomersOutputSchema = z.number().int().nonnegative();
+
+export const scanCustomersOutputSchema = z
+  .object({
+    created: z.number().int().nonnegative(),
+    issues: z.array(customerIssueSchema),
+    removed: z.number().int().nonnegative(),
+    root: z.string().nullable(),
+    scanned: z.number().int().nonnegative(),
+    unchanged: z.number().int().nonnegative(),
+    updated: z.number().int().nonnegative(),
+  })
+  .strict();

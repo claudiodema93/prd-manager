@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "customerName": "NOME_CLIENTE",
+  "article": {
+    "schemaVersion": 1,
+    "parameters": {
+      "CODE": {
+        "required": true,
+        "type": "text"
+      },
+      "EVO": {
+        "required": true,
+        "type": "number",
+        "default": "0"
+      }
+    },
+    "key": "{CODE}[_EVO{EVO:00}]"
+  },
+  "revision": {
+    "schemaVersion": 1,
+    "parameters": {
+      "REV": {
+        "required": true,
+        "type": "number",
+        "default": "0"
+      },
+      "MATERIAL": {
+        "required": false,
+        "type": "text"
+      },
+      "SURFACE_TREATMENT": {
+        "required": false,
+        "type": "text"
+      },
+      "DESCRIPTION": {
+        "required": false,
+        "type": "text"
+      },
+      "WEIGHT": {
+        "required": false,
+        "type": "text"
+      },
+      "MACHINE": {
+        "required": false,
+        "type": "text"
+      }
+    },
+    "key": "REV_{REV}"
+  }
+}

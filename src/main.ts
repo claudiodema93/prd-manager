@@ -61,7 +61,9 @@ const isDevelopment = !app.isPackaged;
 
 /** Native background colour, used to avoid a white flash before first paint. */
 function getWindowBackgroundColor() {
-  return nativeTheme.shouldUseDarkColors ? "#1e1e1e" : "#ffffff";
+  // Match the sidebar surface used by the app shell so the native window never
+  // flashes or shows a differently-colored edge while the renderer paints.
+  return nativeTheme.shouldUseDarkColors ? "#171717" : "#fafafa";
 }
 
 function getRendererEntryPath() {
@@ -331,6 +333,40 @@ async function setupORPC() {
 }
 
 /**
+ * Reconciles the customer cache with the filesystem in the background. It is
+ * intentionally fire-and-forget: a slow or unreadable directory must never
+ * delay the window, and the renderer can request a manual scan at any time.
+ */
+async function scanCustomersOnStartup(): Promise<void> {
+  try {
+    const [{ getDatabase }, { getFoldersPreference }, { scanCustomers }] =
+      await Promise.all([
+        import("@/db"),
+        import("@/preferences/store"),
+        import("@/customers/scan"),
+      ]);
+    const root = getFoldersPreference().articlesDirectory;
+
+    if (!root) {
+      return;
+    }
+
+    const result = await scanCustomers({
+      db: getDatabase(),
+      rootDirectory: root,
+    });
+
+    if (isDevelopment) {
+      console.info(
+        `[customers] Startup scan: ${result.scanned} scanned, ${result.created} created, ${result.updated} updated, ${result.removed} removed.`
+      );
+    }
+  } catch (error) {
+    console.error("[customers] Startup scan failed.", error);
+  }
+}
+
+/**
  * Set once the oRPC listener is registered and the first window was created.
  * Until then the normal startup path owns window creation; `second-instance`
  * and `activate` must not race it (which would drop the MessagePort and/or
@@ -388,6 +424,7 @@ if (started) {
         await setupORPC();
         createWindow();
         startupComplete = true;
+        scanCustomersOnStartup();
         checkForUpdates();
 
         // DevTools extensions are fetched from the Chrome Web Store at runtime;
