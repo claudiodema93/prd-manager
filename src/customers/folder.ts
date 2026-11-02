@@ -1,16 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { constants, type Dirent, type Stats } from "node:fs";
-import {
-  cp,
-  lstat,
-  open,
-  readdir,
-  realpath,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { lstat, open, opendir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { moveFolderToTrash, TrashMoveError } from "../fs/trash";
 import { type CustomerErrorCode, CustomerServiceError } from "./errors";
 import { type CustomerIssue, MAX_CUSTOMER_ISSUE_MESSAGE_LENGTH } from "./types";
 
@@ -383,14 +375,6 @@ function isValidArticleData(value: unknown, customerCode: string): boolean {
   return false;
 }
 
-function compareEntryNames(left: Dirent, right: Dirent): number {
-  if (left.name === right.name) {
-    return 0;
-  }
-
-  return left.name < right.name ? -1 : 1;
-}
-
 function truncateIssueMessage(message: string): string {
   if (message.length <= MAX_CUSTOMER_ISSUE_MESSAGE_LENGTH) {
     return message;
@@ -439,6 +423,67 @@ async function resolveEntryKind(
   }
 }
 
+async function isCountableArticle(input: {
+  readonly customerCode: string;
+  readonly entry: Dirent;
+  readonly entryPath: string;
+  readonly recordIssue: (issue: CustomerIssue) => void;
+}): Promise<boolean> {
+  const { customerCode, entry, entryPath, recordIssue } = input;
+  const kind = await resolveEntryKind(entry, entryPath);
+
+  if (kind === "symlink") {
+    recordIssue({
+      code: "ARTICLE_SYMLINK",
+      message: `Article folder "${entry.name}" is a symbolic link and was ignored.`,
+      path: entryPath,
+      severity: "warning",
+    });
+    return false;
+  }
+
+  if (kind !== "directory") {
+    return false;
+  }
+
+  const articlePath = path.join(entryPath, ARTICLE_FILE_NAME);
+  let article: unknown;
+
+  try {
+    article = await readJsonFile(articlePath, MAX_ARTICLE_DATA_BYTES);
+  } catch (error) {
+    recordIssue({
+      code: "ARTICLE_INVALID",
+      message: `Article folder "${entry.name}" is invalid: ${errorMessage(error)}`,
+      path: articlePath,
+      severity: "warning",
+    });
+    return false;
+  }
+
+  if (article === undefined) {
+    recordIssue({
+      code: "ARTICLE_INVALID",
+      message: `Article folder "${entry.name}" is missing ${ARTICLE_FILE_NAME}.`,
+      path: articlePath,
+      severity: "warning",
+    });
+    return false;
+  }
+
+  if (!isValidArticleData(article, customerCode)) {
+    recordIssue({
+      code: "ARTICLE_INVALID",
+      message: `Article folder "${entry.name}" has an invalid ${ARTICLE_FILE_NAME}.`,
+      path: articlePath,
+      severity: "warning",
+    });
+    return false;
+  }
+
+  return true;
+}
+
 export async function countValidArticles(
   customerFolderPath: string,
   customerCode: string,
@@ -449,27 +494,17 @@ export async function countValidArticles(
     "READ_FAILED",
     "Customer folder path"
   );
+  const maxEntries = options.maxEntries ?? MAX_ARTICLE_ENTRIES;
 
-  let entries: Dirent[];
+  let directory: Awaited<ReturnType<typeof opendir>>;
 
   try {
-    entries = await readdir(resolved, { withFileTypes: true });
+    directory = await opendir(resolved);
   } catch (error) {
     throw serviceError(
       "READ_FAILED",
       `Unable to read customer folder "${resolved}".`,
       error
-    );
-  }
-
-  entries.sort(compareEntryNames);
-
-  const maxEntries = options.maxEntries ?? MAX_ARTICLE_ENTRIES;
-
-  if (entries.length > maxEntries) {
-    throw new CustomerServiceError(
-      "READ_FAILED",
-      `Customer folder "${resolved}" has ${entries.length} entries; the maximum is ${maxEntries}. The article count cannot be determined.`
     );
   }
 
@@ -493,67 +528,56 @@ export async function countValidArticles(
     truncated = true;
   };
 
-  for (const entry of entries) {
-    if (entry.name.startsWith(".")) {
-      continue;
-    }
+  try {
+    let entryCount = 0;
 
-    const entryPath = path.join(resolved, entry.name);
+    for (;;) {
+      let entry: Dirent | null;
 
-    // biome-ignore lint/performance/noAwaitInLoops: entries are inspected sequentially to keep issue order deterministic.
-    const kind = await resolveEntryKind(entry, entryPath);
+      try {
+        // biome-ignore lint/performance/noAwaitInLoops: entries are inspected sequentially to enforce the budget while streaming.
+        entry = await directory.read();
+      } catch (error) {
+        throw serviceError(
+          "READ_FAILED",
+          `Unable to read customer folder "${resolved}".`,
+          error
+        );
+      }
 
-    if (kind === "symlink") {
-      recordIssue({
-        code: "ARTICLE_SYMLINK",
-        message: `Article folder "${entry.name}" is a symbolic link and was ignored.`,
-        path: entryPath,
-        severity: "warning",
+      if (entry === null) {
+        break;
+      }
+
+      entryCount += 1;
+
+      // The budget is enforced while streaming: a full listing is never
+      // materialised, and an over-budget folder is abandoned immediately.
+      if (entryCount > maxEntries) {
+        throw new CustomerServiceError(
+          "READ_FAILED",
+          `Customer folder "${resolved}" has more than ${maxEntries} entries; the maximum is ${maxEntries}. The article count cannot be determined.`
+        );
+      }
+
+      if (entry.name.startsWith(".")) {
+        continue;
+      }
+
+      const entryPath = path.join(resolved, entry.name);
+      const countable = await isCountableArticle({
+        customerCode,
+        entry,
+        entryPath,
+        recordIssue,
       });
-      continue;
+
+      if (countable) {
+        articleCount += 1;
+      }
     }
-
-    if (kind !== "directory") {
-      continue;
-    }
-
-    const articlePath = path.join(entryPath, ARTICLE_FILE_NAME);
-
-    let article: unknown;
-
-    try {
-      article = await readJsonFile(articlePath, MAX_ARTICLE_DATA_BYTES);
-    } catch (error) {
-      recordIssue({
-        code: "ARTICLE_INVALID",
-        message: `Article folder "${entry.name}" is invalid: ${errorMessage(error)}`,
-        path: articlePath,
-        severity: "warning",
-      });
-      continue;
-    }
-
-    if (article === undefined) {
-      recordIssue({
-        code: "ARTICLE_INVALID",
-        message: `Article folder "${entry.name}" is missing ${ARTICLE_FILE_NAME}.`,
-        path: articlePath,
-        severity: "warning",
-      });
-      continue;
-    }
-
-    if (!isValidArticleData(article, customerCode)) {
-      recordIssue({
-        code: "ARTICLE_INVALID",
-        message: `Article folder "${entry.name}" has an invalid ${ARTICLE_FILE_NAME}.`,
-        path: articlePath,
-        severity: "warning",
-      });
-      continue;
-    }
-
-    articleCount += 1;
+  } finally {
+    await directory.close().catch(() => undefined);
   }
 
   if (truncated) {
@@ -568,231 +592,121 @@ export async function countValidArticles(
   return { articleCount, issues };
 }
 
-async function inspect(
-  filePath: string,
-  code: CustomerErrorCode,
-  label: string
-): Promise<Stats | undefined> {
-  try {
-    return await lstatIfExists(filePath);
-  } catch (error) {
-    throw serviceError(
-      code,
-      `Unable to inspect ${label.toLowerCase()} "${filePath}".`,
-      error
-    );
+/**
+ * Translates the generic trash error back into the customer error codes the
+ * IPC layer already understands. Messages mirror the pre-refactor ones so the
+ * customer contract (codes and explanations) stays stable.
+ */
+function customerTrashError(
+  error: TrashMoveError,
+  input: {
+    readonly folderName: string;
+    readonly sourceFolderPath: string;
+    readonly trashDirectory: string;
+  }
+): CustomerServiceError {
+  const { details } = error;
+  const sourcePath = details.sourcePath ?? path.resolve(input.sourceFolderPath);
+  const trashPath = details.trashPath ?? path.resolve(input.trashDirectory);
+  const destination = details.destination ?? "(unknown)";
+
+  switch (error.reason) {
+    case "INVALID_FOLDER_NAME":
+      return new CustomerServiceError(
+        "CUSTOMER_FOLDER_NAME_INVALID",
+        `Invalid customer folder name "${input.folderName}".`,
+        { cause: error }
+      );
+    case "SOURCE_NAME_MISMATCH":
+      return new CustomerServiceError(
+        "CUSTOMER_FOLDER_NAME_INVALID",
+        `Customer folder path "${sourcePath}" does not match the folder name "${input.folderName}".`,
+        { cause: error }
+      );
+    case "SOURCE_NOT_FOUND":
+      return new CustomerServiceError(
+        "CUSTOMER_NOT_FOUND",
+        `Customer folder "${sourcePath}" does not exist.`,
+        { cause: error }
+      );
+    case "SOURCE_SYMLINK":
+      return new CustomerServiceError(
+        "CUSTOMER_FOLDER_SYMLINK",
+        `Refusing to move customer folder "${sourcePath}": it is a symbolic link.`,
+        { cause: error }
+      );
+    case "SOURCE_NOT_DIRECTORY":
+      return new CustomerServiceError(
+        "CUSTOMER_FOLDER_NOT_DIRECTORY",
+        `Customer folder "${sourcePath}" is not a directory.`,
+        { cause: error }
+      );
+    case "TRASH_NOT_FOUND":
+      return new CustomerServiceError(
+        "TRASH_NOT_FOUND",
+        `Trash directory "${trashPath}" does not exist.`,
+        { cause: error }
+      );
+    case "TRASH_SYMLINK":
+      return new CustomerServiceError(
+        "TRASH_SYMLINK",
+        `Refusing to use trash directory "${trashPath}": it is a symbolic link.`,
+        { cause: error }
+      );
+    case "TRASH_NOT_DIRECTORY":
+      return new CustomerServiceError(
+        "TRASH_NOT_DIRECTORY",
+        `Trash directory "${trashPath}" is not a directory.`,
+        { cause: error }
+      );
+    case "TRASH_INSIDE_SOURCE":
+      return new CustomerServiceError(
+        "TRASH_MOVE_FAILED",
+        `Refusing to move "${sourcePath}" into a trash directory inside itself ("${trashPath}").`,
+        { cause: error }
+      );
+    case "DESTINATION_OUTSIDE_TRASH":
+      return new CustomerServiceError(
+        "TRASH_MOVE_FAILED",
+        `Destination "${destination}" is outside the trash directory "${trashPath}".`,
+        { cause: error }
+      );
+    case "COPY_FAILED":
+      return new CustomerServiceError(
+        "TRASH_MOVE_FAILED",
+        `Unable to copy "${sourcePath}" to "${destination}".`,
+        { cause: error }
+      );
+    case "SOURCE_REMOVE_FAILED":
+      return new CustomerServiceError(
+        "TRASH_MOVE_FAILED",
+        `Copied "${sourcePath}" to "${destination}" but could not remove the source.`,
+        { cause: error }
+      );
+    default:
+      return new CustomerServiceError("TRASH_MOVE_FAILED", error.message, {
+        cause: error,
+      });
   }
 }
 
 /**
- * Picks a free destination name: the plain folder name first, then a
- * timestamped variant, then numbered suffixes until an unused path is found.
+ * Moves a customer folder into a trash directory. The generic implementation
+ * lives in `src/fs/trash.ts`; this wrapper keeps the customer-facing signature
+ * and error codes unchanged.
  */
-async function freeDestination(
-  trashDirectory: string,
-  folderName: string
-): Promise<string> {
-  const base = path.join(trashDirectory, folderName);
-
-  if (!(await lstatIfExists(base))) {
-    return base;
-  }
-
-  const stamped = `${base}-${Date.now()}`;
-
-  if (!(await lstatIfExists(stamped))) {
-    return stamped;
-  }
-
-  let counter = 1;
-
-  for (;;) {
-    const candidate = `${stamped}-${counter}`;
-
-    // biome-ignore lint/performance/noAwaitInLoops: collision suffixes must be probed one at a time.
-    if (!(await lstatIfExists(candidate))) {
-      return candidate;
-    }
-
-    counter += 1;
-  }
-}
-
-/**
- * Cross-device fallback: copy first, remove the source only after the copy
- * completed, so an interrupted move can never lose the customer folder.
- */
-async function copyThenRemove(
-  source: string,
-  destination: string
-): Promise<void> {
-  try {
-    await cp(source, destination, {
-      dereference: false,
-      errorOnExist: true,
-      force: false,
-      preserveTimestamps: true,
-      recursive: true,
-    });
-  } catch (error) {
-    throw serviceError(
-      "TRASH_MOVE_FAILED",
-      `Unable to copy "${source}" to "${destination}".`,
-      error
-    );
-  }
-
-  try {
-    await rm(source, { force: false, recursive: true });
-  } catch (error) {
-    throw serviceError(
-      "TRASH_MOVE_FAILED",
-      `Copied "${source}" to "${destination}" but could not remove the source.`,
-      error
-    );
-  }
-}
-
 export async function moveCustomerToTrash(input: {
   folderName: string;
   sourceFolderPath: string;
   trashDirectory: string;
 }): Promise<string> {
-  const { folderName, sourceFolderPath, trashDirectory } = input;
-
-  if (
-    folderName.length === 0 ||
-    folderName === "." ||
-    folderName === ".." ||
-    folderName.includes("/") ||
-    folderName.includes("\\") ||
-    folderName.includes("\0")
-  ) {
-    throw new CustomerServiceError(
-      "CUSTOMER_FOLDER_NAME_INVALID",
-      `Invalid customer folder name "${folderName}".`
-    );
-  }
-
-  const trashPath = resolveAbsolutePath(
-    trashDirectory,
-    "TRASH_MOVE_FAILED",
-    "Trash directory"
-  );
-  const sourcePath = resolveAbsolutePath(
-    sourceFolderPath,
-    "TRASH_MOVE_FAILED",
-    "Customer folder path"
-  );
-
-  const trashStats = await inspect(
-    trashPath,
-    "TRASH_MOVE_FAILED",
-    "Trash directory"
-  );
-
-  if (!trashStats) {
-    throw new CustomerServiceError(
-      "TRASH_NOT_FOUND",
-      `Trash directory "${trashPath}" does not exist.`
-    );
-  }
-
-  if (trashStats.isSymbolicLink()) {
-    throw new CustomerServiceError(
-      "TRASH_SYMLINK",
-      `Refusing to use trash directory "${trashPath}": it is a symbolic link.`
-    );
-  }
-
-  if (!trashStats.isDirectory()) {
-    throw new CustomerServiceError(
-      "TRASH_NOT_DIRECTORY",
-      `Trash directory "${trashPath}" is not a directory.`
-    );
-  }
-
-  const sourceStats = await inspect(
-    sourcePath,
-    "TRASH_MOVE_FAILED",
-    "Customer folder"
-  );
-
-  if (!sourceStats) {
-    throw new CustomerServiceError(
-      "CUSTOMER_NOT_FOUND",
-      `Customer folder "${sourcePath}" does not exist.`
-    );
-  }
-
-  if (sourceStats.isSymbolicLink()) {
-    throw new CustomerServiceError(
-      "CUSTOMER_FOLDER_SYMLINK",
-      `Refusing to move customer folder "${sourcePath}": it is a symbolic link.`
-    );
-  }
-
-  if (!sourceStats.isDirectory()) {
-    throw new CustomerServiceError(
-      "CUSTOMER_FOLDER_NOT_DIRECTORY",
-      `Customer folder "${sourcePath}" is not a directory.`
-    );
-  }
-
-  if (path.basename(sourcePath) !== folderName) {
-    throw new CustomerServiceError(
-      "CUSTOMER_FOLDER_NAME_INVALID",
-      `Customer folder path "${sourcePath}" does not match the folder name "${folderName}".`
-    );
-  }
-
-  let realSource: string;
-  let realTrash: string;
-
   try {
-    [realSource, realTrash] = await Promise.all([
-      realpath(sourcePath),
-      realpath(trashPath),
-    ]);
+    return await moveFolderToTrash(input);
   } catch (error) {
-    throw serviceError(
-      "TRASH_MOVE_FAILED",
-      `Unable to resolve "${sourcePath}" and "${trashPath}".`,
-      error
-    );
-  }
-
-  // Moving a folder into a subdirectory of itself would make the destination
-  // disappear together with the source.
-  if (realSource === realTrash || isPathInside(realSource, realTrash)) {
-    throw new CustomerServiceError(
-      "TRASH_MOVE_FAILED",
-      `Refusing to move "${sourcePath}" into a trash directory inside itself ("${trashPath}").`
-    );
-  }
-
-  const destination = await freeDestination(trashPath, folderName);
-
-  if (!isPathInside(trashPath, destination)) {
-    throw new CustomerServiceError(
-      "TRASH_MOVE_FAILED",
-      `Destination "${destination}" is outside the trash directory "${trashPath}".`
-    );
-  }
-
-  try {
-    await rename(sourcePath, destination);
-  } catch (error) {
-    if (!isErrno(error, "EXDEV")) {
-      throw serviceError(
-        "TRASH_MOVE_FAILED",
-        `Unable to move "${sourcePath}" to "${destination}".`,
-        error
-      );
+    if (error instanceof TrashMoveError) {
+      throw customerTrashError(error, input);
     }
 
-    await copyThenRemove(sourcePath, destination);
+    throw error;
   }
-
-  return destination;
 }

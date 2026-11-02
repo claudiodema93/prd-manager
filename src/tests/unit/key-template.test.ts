@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseKeyTemplate, renderKeyTemplate } from "@/customers/key-template";
+import {
+  parseKeyTemplate,
+  renderKeyTemplate,
+  resolveKeyTemplate,
+} from "@/customers/key-template";
 import type { ParameterDefinitions } from "@/customers/types";
 
 function getThrownError(callback: () => unknown): unknown {
@@ -434,5 +438,92 @@ describe("renderKeyTemplate", () => {
         getThrownError(() => parseKeyTemplate(template, numberParameters))
       ).toMatchObject({ code: "KEY_TEMPLATE_INVALID" });
     }
+  });
+});
+
+describe("resolveKeyTemplate", () => {
+  it("returns the rendered key and canonical values for every declared parameter", () => {
+    const parameters: ParameterDefinitions = {
+      CODE: { required: true, type: "text" },
+      EVO: { default: "0", required: false, type: "number" },
+      EXTRA: { default: " fallback ", required: false, type: "text" },
+      FLAG: { required: false, type: "bool" },
+    };
+
+    expect(
+      resolveKeyTemplate("{CODE}[_EVO{EVO:00}]", parameters, {
+        CODE: "  article  ",
+        EVO: "007",
+        FLAG: "1",
+      })
+    ).toEqual({
+      rendered: "article_EVO07",
+      values: {
+        CODE: "article",
+        EVO: "7",
+        EXTRA: "fallback",
+        FLAG: "true",
+      },
+    });
+  });
+
+  it("canonicalises booleans and applies defaults", () => {
+    expect(resolveKeyTemplate("{B}", boolParameters, { B: "FALSE" })).toEqual({
+      rendered: "false",
+      values: { B: "false", FLAG: "false" },
+    });
+
+    const defaulted: ParameterDefinitions = {
+      N: { default: "007", required: true, type: "number" },
+    };
+
+    expect(resolveKeyTemplate("N{N}", defaulted, {})).toEqual({
+      rendered: "N7",
+      values: { N: "7" },
+    });
+  });
+
+  it("ignores values for undeclared parameters", () => {
+    expect(
+      resolveKeyTemplate("{A}", textParameters, {
+        A: "x",
+        B: "b",
+        OTHER: "y",
+        T: "t",
+      })
+    ).toEqual({ rendered: "x", values: { A: "x", B: "b", T: "t" } });
+  });
+
+  it("rejects a missing required parameter", () => {
+    expect(
+      getThrownError(() => resolveKeyTemplate("{T}", textParameters, {}))
+    ).toMatchObject({ code: "KEY_RENDER_INVALID" });
+  });
+
+  it("rejects a missing required parameter even when it is not referenced", () => {
+    const parameters: ParameterDefinitions = {
+      T: { required: true, type: "text" },
+      UNUSED: { required: true, type: "text" },
+    };
+
+    expect(
+      getThrownError(() =>
+        resolveKeyTemplate("{T}", parameters, { T: "value" })
+      )
+    ).toMatchObject({ code: "KEY_RENDER_INVALID" });
+  });
+
+  it("keeps renderKeyTemplate output identical to the resolved rendering", () => {
+    expect(
+      renderKeyTemplate("{CODE}[_EVO{EVO:00}]", articleParameters, {
+        CODE: "article-example-2",
+        EVO: 1,
+      })
+    ).toBe(
+      resolveKeyTemplate("{CODE}[_EVO{EVO:00}]", articleParameters, {
+        CODE: "article-example-2",
+        EVO: 1,
+      }).rendered
+    );
   });
 });

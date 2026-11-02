@@ -10,7 +10,7 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { customers as customersTable } from "@/db/schema";
+import { articles, customers as customersTable } from "@/db/schema";
 import { ipcContext } from "@/ipc/context";
 import { router } from "@/ipc/router";
 
@@ -87,7 +87,7 @@ vi.mock("@/db", () => ({
   getDatabase: () => state.db,
 }));
 
-const schema = { customers: customersTable };
+const schema = { articles, customers: customersTable };
 type TestDatabase = ReturnType<typeof drizzle<typeof schema>>;
 type TestClient = RouterClient<typeof router>;
 
@@ -229,6 +229,23 @@ describe("production IPC router", () => {
     );
   });
 
+  it("serves the articles namespace over the wire", async () => {
+    const customerFolderPath = path.resolve("/articles/customer-0001");
+
+    await expect(
+      client.articles.listArticles({ customerFolderPath })
+    ).resolves.toEqual({ items: [], total: 0 });
+    await expect(
+      client.articles.getArticle({
+        folderPath: path.join(customerFolderPath, "article-1"),
+      })
+    ).resolves.toBeNull();
+    await expect(client.articles.scanArticles({})).resolves.toEqual(
+      EMPTY_SCAN_RESULT
+    );
+    await expect(client.articles.clearArticles()).resolves.toBe(0);
+  });
+
   it("rejects removeCustomer before the root check when no root is configured", async () => {
     // The root guard runs before the folder lookup, so an unconfigured root is
     // PRECONDITION_FAILED rather than NOT_FOUND.
@@ -303,7 +320,7 @@ describe("production IPC router", () => {
     );
 
     await expect(
-      fs.lstat(path.join(trashDirectory, "customer-0001"))
+      fs.lstat(path.join(trashDirectory, "customers", "customer-0001"))
     ).resolves.toBeDefined();
     await expect(fs.lstat(folderPath)).rejects.toMatchObject({
       code: "ENOENT",
@@ -335,6 +352,23 @@ describe("production IPC router", () => {
       total: 1,
     });
 
+    const customerFolderPath = (await client.customers.listCustomers({}))
+      .items[0]?.folderPath;
+
+    if (customerFolderPath === undefined) {
+      throw new Error("The created customer was not cached.");
+    }
+
+    const createdArticle = await client.articles.createArticle({
+      customerFolderPath,
+      parameters: { CODE: "article-one" },
+    });
+
+    expect(createdArticle.folderName).toBe("article-one");
+    await expect(
+      client.articles.listArticles({ customerFolderPath })
+    ).resolves.toMatchObject({ total: 1 });
+
     await client.preferences.setFolder({
       directory: secondRoot,
       key: "articlesDirectory",
@@ -345,6 +379,9 @@ describe("production IPC router", () => {
       items: [],
       total: 0,
     });
+    await expect(
+      client.articles.listArticles({ customerFolderPath })
+    ).resolves.toEqual({ items: [], total: 0 });
   });
 
   it("runs a window procedure against the context window", async () => {

@@ -7,6 +7,7 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type ArticleDatabase, getArticleRow } from "@/articles/store";
 import { CustomerServiceError } from "@/customers/errors";
 import {
   type CustomerRecord,
@@ -17,7 +18,7 @@ import type {
   CustomerCacheMetadata,
   CustomerSectionDefinition,
 } from "@/customers/types";
-import { customers } from "@/db/schema";
+import { articles, customers } from "@/db/schema";
 import {
   clearCustomers,
   createCustomer,
@@ -56,7 +57,7 @@ vi.mock("@/preferences/store", () => ({
 
 // Derive the database type locally so this test does not depend on the name of
 // the type exported by `@/db`.
-const schema = { customers };
+const schema = { articles, customers };
 type TestDatabase = ReturnType<typeof drizzle<typeof schema>>;
 
 const CONFIG_FILE = "customer_data.json";
@@ -483,6 +484,24 @@ describe("scanCustomers", () => {
     });
   });
 
+  it("refreshes the article cache after scanning customers", async () => {
+    const folderPath = path.join(articlesDirectory, FOLDER_NAME);
+    const articlePath = path.join(folderPath, "article-1");
+
+    await writeCustomerConfig(folderPath);
+    await fs.mkdir(articlePath, { recursive: true });
+    await fs.writeFile(
+      path.join(articlePath, ARTICLE_FILE),
+      JSON.stringify({ customer: CUSTOMER_CODE, NUM: 1, schemaVersion: 1 })
+    );
+
+    await call(scanCustomers, {});
+
+    expect(
+      getArticleRow(state.db as ArticleDatabase, articlePath)
+    ).not.toBeNull();
+  });
+
   it("rethrows unexpected errors as-is", async () => {
     // The mock database is intentionally missing, so the handler fails before
     // the scanner runs and `mapCustomerError` must not hide the real error.
@@ -604,7 +623,7 @@ describe("removeCustomer", () => {
     ).resolves.toBe(created.folderPath);
     await expect(pathExists(created.folderPath)).resolves.toBe(false);
     await expect(
-      pathExists(path.join(trashDirectory, FOLDER_NAME))
+      pathExists(path.join(trashDirectory, "customers", FOLDER_NAME))
     ).resolves.toBe(true);
     await expect(
       call(getCustomer, { folderPath: created.folderPath })

@@ -12,6 +12,9 @@
 import type { Dirent } from "node:fs";
 import { mkdir, readdir, realpath, rm } from "node:fs/promises";
 import path from "node:path";
+import { deleteArticleRowsUnderCustomer } from "../articles/store";
+import { assertConfiguredRoot, RootDirectoryError } from "../fs/root";
+import { ensureTrashSubdirectory, TrashMoveError } from "../fs/trash";
 import {
   CUSTOMER_CONFIG_SCHEMA_VERSION,
   MAX_CUSTOMER_CONFIG_BYTES,
@@ -107,44 +110,95 @@ function configPathFor(folderPath: string): string {
 }
 
 /**
- * Resolves and validates the configured articles directory. A broken root is
- * reported explicitly rather than being treated as "no customers".
+ * Maps the shared root-validation reason back to the customer error codes the
+ * IPC layer already publishes. The message is preserved verbatim.
+ */
+function customerRootError(error: RootDirectoryError): CustomerServiceError {
+  switch (error.reason) {
+    case "NOT_CONFIGURED":
+      return new CustomerServiceError("ROOT_NOT_CONFIGURED", error.message, {
+        cause: error,
+      });
+    case "NOT_FOUND":
+      return new CustomerServiceError("ROOT_NOT_FOUND", error.message, {
+        cause: error,
+      });
+    case "SYMLINK":
+      return new CustomerServiceError("ROOT_SYMLINK", error.message, {
+        cause: error,
+      });
+    case "NOT_DIRECTORY":
+      return new CustomerServiceError("ROOT_NOT_DIRECTORY", error.message, {
+        cause: error,
+      });
+    default:
+      return new CustomerServiceError("ROOT_NOT_FOUND", error.message, {
+        cause: error,
+      });
+  }
+}
+
+/**
+ * Resolves and validates the configured articles directory through the shared
+ * root guard. A broken root is reported explicitly rather than being treated
+ * as "no customers".
  */
 async function assertArticlesDirectory(
   context: CustomerServiceContext
 ): Promise<string> {
-  if (context.articlesDirectory === null) {
-    throw new CustomerServiceError(
-      "ROOT_NOT_CONFIGURED",
-      "The articles directory is not configured."
-    );
+  try {
+    return await assertConfiguredRoot(context.articlesDirectory);
+  } catch (error) {
+    if (!(error instanceof RootDirectoryError)) {
+      throw error;
+    }
+
+    throw customerRootError(error);
+  }
+}
+
+function customerTrashSubdirectoryError(
+  error: TrashMoveError
+): CustomerServiceError {
+  if (error.reason === "TRASH_NOT_FOUND") {
+    return new CustomerServiceError("TRASH_NOT_FOUND", error.message, {
+      cause: error,
+    });
   }
 
-  const root = path.resolve(context.articlesDirectory);
-  const stats = await lstatIfExists(root);
-
-  if (!stats) {
-    throw new CustomerServiceError(
-      "ROOT_NOT_FOUND",
-      `Articles directory "${root}" does not exist.`
-    );
+  if (error.reason === "TRASH_SYMLINK") {
+    return new CustomerServiceError("TRASH_SYMLINK", error.message, {
+      cause: error,
+    });
   }
 
-  if (stats.isSymbolicLink()) {
-    throw new CustomerServiceError(
-      "ROOT_SYMLINK",
-      `Refusing to use articles directory "${root}": it is a symbolic link.`
-    );
+  if (error.reason === "TRASH_NOT_DIRECTORY") {
+    return new CustomerServiceError("TRASH_NOT_DIRECTORY", error.message, {
+      cause: error,
+    });
   }
 
-  if (!stats.isDirectory()) {
-    throw new CustomerServiceError(
-      "ROOT_NOT_DIRECTORY",
-      `Articles directory "${root}" is not a directory.`
-    );
-  }
+  return new CustomerServiceError("TRASH_MOVE_FAILED", error.message, {
+    cause: error,
+  });
+}
 
-  return root;
+/**
+ * Creates (or reuses) `<trashDirectory>/customers` and maps generic trash
+ * failures onto the customer contract.
+ */
+async function customersTrashDirectory(
+  trashDirectory: string
+): Promise<string> {
+  try {
+    return await ensureTrashSubdirectory(trashDirectory, "customers");
+  } catch (error) {
+    if (!(error instanceof TrashMoveError)) {
+      throw error;
+    }
+
+    throw customerTrashSubdirectoryError(error);
+  }
 }
 
 /**
@@ -684,13 +738,38 @@ export function removeCustomer(
       );
     }
 
+    const customerTrashDirectory =
+      await customersTrashDirectory(trashDirectory);
+
+    // Guard against an ancestor trash directory: when the trash root is the
+    // parent of the articles root and the root is named `customers`, the type
+    // subdirectory resolves back inside the root and the move becomes an
+    // in-place rename. Compare real paths after creation, before moving.
+    const [realRootForTrash, realCustomerTrashDirectory] = await Promise.all([
+      realpath(root).catch(() => null),
+      realpath(customerTrashDirectory).catch(() => null),
+    ]);
+
+    if (
+      realRootForTrash !== null &&
+      realCustomerTrashDirectory !== null &&
+      isPathInside(realRootForTrash, realCustomerTrashDirectory)
+    ) {
+      throw new CustomerServiceError(
+        "INVALID_OPERATION",
+        "The customer trash subdirectory must be outside the articles directory."
+      );
+    }
+
     await moveCustomerToTrash({
       folderName: parsed.folderName,
       sourceFolderPath: folderPath,
-      trashDirectory,
+      trashDirectory: customerTrashDirectory,
     });
 
     // The folder was the source of truth; a missing cache row is not an error.
+    // Article rows under the removed customer are stale cache entries too.
+    deleteArticleRowsUnderCustomer(context.db, folderPath);
     deleteCustomerRow(context.db, folderPath);
 
     return folderPath;

@@ -1,7 +1,7 @@
 {
-    "schemaVersion": 1,
-    "REV": "1",
-    "MATERIAL": "EN AW-6082 T6",
-    "SURFACE_TREATMENT": "Verniciatura",
-    "DESCRIPTION": "SHEET"
+  "schemaVersion": 1,
+  "REV": "1",
+  "MATERIAL": "EN AW-6082 T6",
+  "SURFACE_TREATMENT": "Verniciatura",
+  "DESCRIPTION": "SHEET"
 }

@@ -20,6 +20,7 @@ import {
  * every platform. Everything else delegates to the real implementation.
  */
 const fsControl = vi.hoisted(() => ({
+  failCp: false,
   failRenameAt: new Map<number, string>(),
   failRmAt: new Map<number, string>(),
   renameCalls: 0,
@@ -34,6 +35,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
   return {
     ...actual,
+    cp: async (...args: Parameters<typeof actual.cp>) => {
+      if (fsControl.failCp) {
+        throw errno("cp", "EIO");
+      }
+
+      await actual.cp(...args);
+    },
     rename: async (from: string, to: string) => {
       fsControl.renameCalls += 1;
 
@@ -78,6 +86,7 @@ const TRASH_SUFFIX_PATTERN = /-\d+(?:-\d+)?$/u;
 let tempDir: string;
 
 beforeEach(async () => {
+  fsControl.failCp = false;
   fsControl.renameCalls = 0;
   fsControl.rmCalls = 0;
   fsControl.failRenameAt.clear();
@@ -702,6 +711,60 @@ describe("moveCustomerToTrash", () => {
     await expect(
       pathExists(path.join(trashDirectory, FOLDER_NAME))
     ).resolves.toBe(true);
+  });
+
+  it("fails with TRASH_MOVE_FAILED when the cross-device copy fails", async () => {
+    const trashDirectory = path.join(tempDir, "trash");
+    const sourceFolderPath = path.join(tempDir, FOLDER_NAME);
+
+    await fs.mkdir(trashDirectory);
+    await fs.mkdir(sourceFolderPath);
+    fsControl.failRenameAt.set(1, "EXDEV");
+    fsControl.failCp = true;
+
+    expect(
+      await captureAsyncError(() =>
+        moveCustomerToTrash({
+          folderName: FOLDER_NAME,
+          sourceFolderPath,
+          trashDirectory,
+        })
+      )
+    ).toMatchObject({ code: "TRASH_MOVE_FAILED" });
+
+    await expect(pathExists(sourceFolderPath)).resolves.toBe(true);
+  });
+
+  it("fails with TRASH_MOVE_FAILED for a relative source path", async () => {
+    const trashDirectory = path.join(tempDir, "trash");
+
+    await fs.mkdir(trashDirectory);
+
+    expect(
+      await captureAsyncError(() =>
+        moveCustomerToTrash({
+          folderName: FOLDER_NAME,
+          sourceFolderPath: "relative-source",
+          trashDirectory,
+        })
+      )
+    ).toMatchObject({ code: "TRASH_MOVE_FAILED" });
+  });
+
+  it("fails with TRASH_MOVE_FAILED for a relative trash path", async () => {
+    const sourceFolderPath = path.join(tempDir, FOLDER_NAME);
+
+    await fs.mkdir(sourceFolderPath);
+
+    expect(
+      await captureAsyncError(() =>
+        moveCustomerToTrash({
+          folderName: FOLDER_NAME,
+          sourceFolderPath,
+          trashDirectory: "relative-trash",
+        })
+      )
+    ).toMatchObject({ code: "TRASH_MOVE_FAILED" });
   });
 
   it("fails with TRASH_NOT_FOUND when the trash directory is missing", async () => {

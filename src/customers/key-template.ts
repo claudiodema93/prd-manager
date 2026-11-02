@@ -564,19 +564,50 @@ function validateRenderedKey(key: string): void {
   }
 }
 
+export interface ResolvedKeyTemplate {
+  /** The rendered, file-name-safe key. */
+  readonly rendered: string;
+  /**
+   * Canonical string value for the resolved parameters. The default call
+   * resolves every declared parameter; `renderKeyTemplate` resolves only the
+   * ones referenced by the template to preserve its historical behaviour.
+   */
+  readonly values: Readonly<Record<string, string>>;
+}
+
+export interface ResolveKeyTemplateOptions {
+  /**
+   * Resolve and canonicalise every declared parameter (default), not only the
+   * ones referenced by the template. Article data relies on the default;
+   * `renderKeyTemplate` opts out so unused required parameters do not turn an
+   * otherwise valid rendering into an error.
+   */
+  readonly allParameters?: boolean;
+}
+
 /**
- * Renders a key template with the supplied values. Missing values fall back to
- * the parameter default; required parameters are rejected when blank.
+ * Renders a key template and also returns the canonical string value of the
+ * resolved parameters. By default every declared parameter is resolved (not
+ * only the ones referenced by the template). Article data uses this to persist
+ * numbers as canonical decimals and booleans as `"true"`/`"false"` without
+ * duplicating the rendering rules.
  */
-export function renderKeyTemplate(
+export function resolveKeyTemplate(
   template: string,
   parameters: ParameterDefinitions,
-  values: Readonly<Record<string, string | number | boolean | null | undefined>>
-): string {
+  values: Readonly<
+    Record<string, string | number | boolean | null | undefined>
+  >,
+  options: ResolveKeyTemplateOptions = {}
+): ResolvedKeyTemplate {
   const parsed = parseKeyTemplate(template, parameters);
   const resolved = new Map<string, ResolvedParameterValue>();
+  const names =
+    options.allParameters === false
+      ? parsed.referencedParameters
+      : Object.keys(parameters);
 
-  for (const name of parsed.referencedParameters) {
+  for (const name of names) {
     resolved.set(
       name,
       resolveParameterValue(name, parameters[name], values[name])
@@ -586,5 +617,32 @@ export function renderKeyTemplate(
   const rendered = renderTokens(parsed.tokens, resolved);
   validateRenderedKey(rendered.text);
 
-  return rendered.text;
+  const canonicalValues: Record<string, string> = {};
+
+  for (const name of names) {
+    const value = resolved.get(name);
+
+    if (value === undefined) {
+      throw renderError(`Parameter "${name}" was not resolved.`);
+    }
+
+    canonicalValues[name] = value.value;
+  }
+
+  return { rendered: rendered.text, values: canonicalValues };
+}
+
+/**
+ * Renders a key template with the supplied values. Missing values fall back to
+ * the parameter default; required parameters are rejected when blank. Only
+ * parameters referenced by the template are resolved, as before.
+ */
+export function renderKeyTemplate(
+  template: string,
+  parameters: ParameterDefinitions,
+  values: Readonly<Record<string, string | number | boolean | null | undefined>>
+): string {
+  return resolveKeyTemplate(template, parameters, values, {
+    allParameters: false,
+  }).rendered;
 }

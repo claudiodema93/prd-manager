@@ -6,6 +6,12 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  type ArticleDatabase,
+  getArticleRow,
+  type UpsertArticleRowInput,
+  upsertArticleRow,
+} from "@/articles/store";
 import { CUSTOMER_CONFIG_SCHEMA_VERSION } from "@/customers/config";
 import {
   type CustomerServiceContext,
@@ -20,7 +26,7 @@ import {
   getCustomerRow,
 } from "@/customers/store";
 import type { CustomerSectionDefinition } from "@/customers/types";
-import { customers } from "@/db/schema";
+import { articles, customers } from "@/db/schema";
 
 /**
  * Lets one test simulate a failure between `mkdir` and the config write, which
@@ -46,7 +52,7 @@ vi.mock("@/customers/folder", async (importOriginal) => {
 const CONFIG_FILE = "customer_data.json";
 const ARTICLE_FILE = "article_data.json";
 const HAS_ARTICLES_PATTERN = /1 valid article/u;
-const schema = { customers };
+const schema = { articles, customers };
 
 type TestDatabase = ReturnType<typeof drizzle<typeof schema>>;
 
@@ -551,7 +557,9 @@ describe("removeCustomer", () => {
     ).resolves.toBe(created.folderPath);
 
     expect(await pathExists(created.folderPath)).toBe(false);
-    expect(await pathExists(path.join(trash, created.folderName))).toBe(true);
+    expect(
+      await pathExists(path.join(trash, "customers", created.folderName))
+    ).toBe(true);
     expect(getCustomerRow(database, created.folderPath)).toBeNull();
   });
 
@@ -579,7 +587,9 @@ describe("removeCustomer", () => {
       removeCustomer(context, { folderPath: created.folderPath })
     ).resolves.toBe(created.folderPath);
 
-    expect(await pathExists(path.join(trash, created.folderName))).toBe(true);
+    expect(
+      await pathExists(path.join(trash, "customers", created.folderName))
+    ).toBe(true);
   });
 
   it("refuses a trash directory inside the articles directory", async () => {
@@ -593,6 +603,48 @@ describe("removeCustomer", () => {
       removeCustomer(context, { folderPath: created.folderPath })
     ).rejects.toMatchObject({ code: "INVALID_OPERATION" });
     expect(await pathExists(created.folderPath)).toBe(true);
+  });
+
+  it("refuses an ancestor trash directory that resolves back into the root", async () => {
+    const created = await createDefault();
+
+    // `root` basename is "customers", so <trash>/customers resolves back to the
+    // root itself and the move would become an in-place rename.
+    context = { ...context, trashDirectory: path.dirname(root) };
+
+    await expect(
+      removeCustomer(context, { folderPath: created.folderPath })
+    ).rejects.toMatchObject({ code: "INVALID_OPERATION" });
+    expect(await pathExists(created.folderPath)).toBe(true);
+  });
+
+  it("deletes the cached article rows of the removed customer", async () => {
+    const created = await createDefault();
+    const articlePath = path.join(created.folderPath, "article-1");
+    const articleInput: UpsertArticleRowInput = {
+      activeRevision: null,
+      customerCode: created.customerCode,
+      customerFolderPath: created.folderPath,
+      folderMtimeMs: 1,
+      folderName: "article-1",
+      folderPath: articlePath,
+      metadata: {
+        activeRevision: null,
+        customer: Number(created.customerCode),
+        customParameters: {},
+        parameters: {},
+        schemaVersion: 1,
+      },
+      revisionCount: 0,
+      schemaVersion: 1,
+    };
+
+    upsertArticleRow(database as ArticleDatabase, articleInput);
+
+    await expect(
+      removeCustomer(context, { folderPath: created.folderPath })
+    ).resolves.toBe(created.folderPath);
+    expect(getArticleRow(database as ArticleDatabase, articlePath)).toBeNull();
   });
 
   it("requires a configured trash directory", async () => {
@@ -618,7 +670,9 @@ describe("removeCustomer", () => {
     await expect(
       removeCustomer(context, { folderPath: created.folderPath })
     ).resolves.toBe(created.folderPath);
-    expect(await pathExists(path.join(trash, created.folderName))).toBe(true);
+    expect(
+      await pathExists(path.join(trash, "customers", created.folderName))
+    ).toBe(true);
   });
 
   it("rejects a folder outside the articles directory", async () => {
