@@ -36,7 +36,7 @@ import {
   articleFolderFingerprint,
   readArticleDataFile,
 } from "./folder";
-import { countValidRevisions } from "./revisions";
+import { countValidRevisions, RevisionMatchBudgetError } from "./revisions";
 import {
   type ArticleDatabase,
   type ArticleRecord,
@@ -423,12 +423,20 @@ interface ArticleInspectionInput {
 }
 
 /**
+ * Sentinel returned when the article data is valid but its revision count
+ * could not be determined because the matcher's work budget ran out. The
+ * existing cached row (if any) must be preserved instead of being deleted.
+ */
+const PRESERVE_ROW = "preserve-row" as const;
+
+/**
  * Reads, parses and fingerprints one article folder. Returns `null` after
- * recording the matching issue when the folder cannot be cached.
+ * recording the matching issue when the folder cannot be cached, or
+ * `PRESERVE_ROW` when the cached row must survive an inconclusive count.
  */
 async function buildArticleSnapshot(
   input: ArticleInspectionInput
-): Promise<RowSnapshot | null> {
+): Promise<RowSnapshot | null | typeof PRESERVE_ROW> {
   const {
     articleFolderPath,
     config,
@@ -473,7 +481,10 @@ async function buildArticleSnapshot(
         articleFolderPath
       )
     );
-    return null;
+
+    // Budget exhaustion is inconclusive, not invalid: the data file parsed, so
+    // keep the previous row rather than deleting a legitimate article.
+    return error instanceof RevisionMatchBudgetError ? PRESERVE_ROW : null;
   }
 
   return {
@@ -570,6 +581,12 @@ async function reconcileCustomerEntry(
     folderName: entry.name,
     recordIssue,
   });
+
+  if (snapshot === PRESERVE_ROW) {
+    // An inconclusive revision count must not wipe the cached row.
+    seen.add(articleFolderPath);
+    return;
+  }
 
   if (snapshot === null) {
     return;

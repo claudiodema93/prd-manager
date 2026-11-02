@@ -10,7 +10,11 @@
 
 import { z } from "zod";
 import { CustomerServiceError } from "./errors";
-import { parseKeyTemplate } from "./key-template";
+import {
+  findMatchableTemplateProblem,
+  type ParsedKeyTemplate,
+  parseKeyTemplate,
+} from "./key-template";
 import type {
   CustomerConfig,
   CustomerSectionDefinition,
@@ -305,8 +309,10 @@ function assertKeyTemplate(
   label: "article" | "revision" | "section",
   section: CustomerSectionDefinition
 ): void {
+  let parsed: ParsedKeyTemplate;
+
   try {
-    parseKeyTemplate(section.key, section.parameters);
+    parsed = parseKeyTemplate(section.key, section.parameters);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
 
@@ -314,6 +320,19 @@ function assertKeyTemplate(
       `Invalid ${label} key template "${section.key}": ${detail}`,
       error
     );
+  }
+
+  // A revision key is matched against revision folder names by the article
+  // scanner. Rejecting unmatchable templates here keeps the app from accepting
+  // a customer whose every article would become uncacheable.
+  if (label === "revision") {
+    const problem = findMatchableTemplateProblem(parsed);
+
+    if (problem !== null) {
+      throw invalidConfig(
+        `Invalid revision key template "${section.key}": ${problem}.`
+      );
+    }
   }
 }
 

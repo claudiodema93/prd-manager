@@ -482,6 +482,56 @@ describe("parseCustomerSectionDefinition", () => {
   });
 });
 
+describe("parseCustomerConfig revision key limits", () => {
+  it("rejects a revision key with more than eight placeholders", () => {
+    const config = createValidConfig();
+    config.revision.key = Array.from({ length: 9 }, () => "{REV}").join("_");
+
+    expectCode(() => parseCustomerConfig(config), "CONFIG_INVALID");
+  });
+
+  it("rejects adjacent revision placeholders", () => {
+    const config = createValidConfig();
+    config.revision.key = "{REV}{REV}";
+
+    expectCode(() => parseCustomerConfig(config), "CONFIG_INVALID");
+  });
+
+  it("rejects adjacency exposed only when an optional group is removed", () => {
+    const config = createValidConfig();
+    config.revision.key = "{REV}[_x{REV}]{REV}";
+
+    expectCode(() => parseCustomerConfig(config), "CONFIG_INVALID");
+  });
+
+  it("rejects more than four optional groups", () => {
+    const config = createValidConfig();
+    config.revision.key = "{REV}[_x{REV}][_x{REV}][_x{REV}][_x{REV}][_x{REV}]";
+
+    expectCode(() => parseCustomerConfig(config), "CONFIG_INVALID");
+  });
+
+  it("still accepts article keys with adjacent placeholders", () => {
+    const config = createValidConfig();
+    config.article.key = "{CODE}{EVO}";
+
+    expect(() => parseCustomerConfig(config)).not.toThrow();
+  });
+
+  it("rejects an unmatchable revision key before serialising", () => {
+    const clean = parseCustomerConfig(createValidConfig());
+    const config = {
+      ...clean,
+      revision: { ...clean.revision, key: "{REV}{REV}" },
+    };
+
+    expectCode(
+      () => serializeCustomerConfig(config as unknown as CustomerConfig),
+      "CONFIG_INVALID"
+    );
+  });
+});
+
 describe("serializeCustomerConfig", () => {
   it("round-trips a valid config through JSON", () => {
     const config = parseCustomerConfig(createValidConfig());

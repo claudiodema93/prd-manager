@@ -25,7 +25,9 @@ import { articles, customers } from "@/db/schema";
  * exercise the "never cache an unknown revision count as 0" branch on a healthy
  * filesystem. Every other call delegates to the real implementation.
  */
-const revisionControl = vi.hoisted(() => ({ fail: false }));
+const revisionControl = vi.hoisted(() => ({
+  mode: "none" as "budget" | "generic" | "none",
+}));
 
 vi.mock("@/articles/revisions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/articles/revisions")>();
@@ -35,7 +37,13 @@ vi.mock("@/articles/revisions", async (importOriginal) => {
     countValidRevisions: async (
       ...args: Parameters<typeof actual.countValidRevisions>
     ) => {
-      if (revisionControl.fail) {
+      if (revisionControl.mode === "budget") {
+        throw new actual.RevisionMatchBudgetError(
+          "simulated revision matcher budget exhaustion"
+        );
+      }
+
+      if (revisionControl.mode === "generic") {
         throw new Error("simulated revision read failure");
       }
 
@@ -133,7 +141,7 @@ async function makeTempDir(prefix: string): Promise<string> {
 }
 
 beforeEach(async () => {
-  revisionControl.fail = false;
+  revisionControl.mode = "none";
   sqlite = new Database(":memory:");
   const database: TestDatabase = drizzle({ client: sqlite, schema });
 
@@ -578,13 +586,36 @@ describe("invalid entries", () => {
       schemaVersion: 1,
     });
 
-    revisionControl.fail = true;
+    revisionControl.mode = "generic";
 
     const result = await scan(root);
 
     expect(result).toMatchObject({ created: 0, scanned: 0 });
     expect(issueCodes(result)).toEqual(["ARTICLE_DATA_UNREADABLE"]);
     expect(getArticleRow(db, articlePath)).toBeNull();
+  });
+
+  it("preserves the cached row when the matcher budget is exhausted", async () => {
+    const customerPath = await createCustomerFolder("customer-0001");
+    const articlePath = await writeArticle(customerPath, "article-1", {
+      CODE: "article-1",
+      customer: 1,
+      schemaVersion: 1,
+    });
+
+    await scan(root);
+
+    const before = getArticleRow(db, articlePath);
+
+    expect(before).not.toBeNull();
+
+    revisionControl.mode = "budget";
+
+    const result = await scan(root);
+
+    expect(result).toMatchObject({ created: 0, removed: 0, scanned: 0 });
+    expect(issueCodes(result)).toEqual(["ARTICLE_DATA_UNREADABLE"]);
+    expect(getArticleRow(db, articlePath)?.updatedAt).toBe(before?.updatedAt);
   });
 
   it("ignores hidden and unrelated entries but flags customer-named files", async () => {

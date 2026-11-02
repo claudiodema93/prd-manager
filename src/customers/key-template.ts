@@ -368,6 +368,145 @@ export function parseKeyTemplate(
   };
 }
 
+/**
+ * Caps that keep matching a key template tractable. They apply to
+ * `revision.key` only: an article key is rendered from values and never
+ * matched against folder names, so adjacency and token count are harmless
+ * there.
+ */
+export const MATCHABLE_TEMPLATE_LIMITS = {
+  maxOptionalGroups: 4,
+  maxPlaceholders: 8,
+  maxTokens: 32,
+} as const;
+
+type FlatTokenKind = "literal" | "placeholder";
+
+/**
+ * Flattens tokens into literals and placeholders. With `expandOptionals`, the
+ * contents of an optional group are inlined; without it, the whole group is
+ * dropped, modelling both possible rendered forms of the key.
+ */
+function flattenMatchTokens(
+  tokens: readonly TemplateToken[],
+  expandOptionals: boolean
+): FlatTokenKind[] {
+  const flattened: FlatTokenKind[] = [];
+
+  for (const token of tokens) {
+    if (token.kind === "literal") {
+      flattened.push("literal");
+      continue;
+    }
+
+    if (token.kind === "placeholder") {
+      flattened.push("placeholder");
+      continue;
+    }
+
+    if (expandOptionals) {
+      flattened.push(...flattenMatchTokens(token.tokens, true));
+    }
+  }
+
+  return flattened;
+}
+
+function hasAdjacentMatchPlaceholders(
+  tokens: readonly FlatTokenKind[]
+): boolean {
+  for (let index = 1; index < tokens.length; index += 1) {
+    if (
+      tokens[index - 1] === "placeholder" &&
+      tokens[index] === "placeholder"
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function countTemplatePlaceholders(tokens: readonly TemplateToken[]): number {
+  let count = 0;
+
+  for (const token of tokens) {
+    if (token.kind === "placeholder") {
+      count += 1;
+      continue;
+    }
+
+    if (token.kind === "optional") {
+      count += countTemplatePlaceholders(token.tokens);
+    }
+  }
+
+  return count;
+}
+
+function countTemplateOptionalGroups(tokens: readonly TemplateToken[]): number {
+  let count = 0;
+
+  for (const token of tokens) {
+    if (token.kind === "optional") {
+      count += 1 + countTemplateOptionalGroups(token.tokens);
+    }
+  }
+
+  return count;
+}
+
+function countTemplateTokens(tokens: readonly TemplateToken[]): number {
+  let count = 0;
+
+  for (const token of tokens) {
+    count += 1;
+
+    if (token.kind === "optional") {
+      count += countTemplateTokens(token.tokens);
+    }
+  }
+
+  return count;
+}
+
+/**
+ * Returns a clause describing why a parsed template cannot be matched against
+ * folder names, or `null` when it is safe. Keeping this next to the parser
+ * means `parseCustomerConfig` and the article revision matcher enforce exactly
+ * the same limits.
+ */
+export function findMatchableTemplateProblem(
+  parsed: ParsedKeyTemplate
+): string | null {
+  const placeholders = countTemplatePlaceholders(parsed.tokens);
+
+  if (placeholders > MATCHABLE_TEMPLATE_LIMITS.maxPlaceholders) {
+    return `contains ${placeholders} placeholders; the maximum is ${MATCHABLE_TEMPLATE_LIMITS.maxPlaceholders}`;
+  }
+
+  const optionalGroups = countTemplateOptionalGroups(parsed.tokens);
+
+  if (optionalGroups > MATCHABLE_TEMPLATE_LIMITS.maxOptionalGroups) {
+    return `contains ${optionalGroups} optional groups; the maximum is ${MATCHABLE_TEMPLATE_LIMITS.maxOptionalGroups}`;
+  }
+
+  if (
+    countTemplateTokens(parsed.tokens) > MATCHABLE_TEMPLATE_LIMITS.maxTokens
+  ) {
+    return `contains too many tokens; the maximum is ${MATCHABLE_TEMPLATE_LIMITS.maxTokens}`;
+  }
+
+  if (
+    hasAdjacentMatchPlaceholders(flattenMatchTokens(parsed.tokens, true)) ||
+    hasAdjacentMatchPlaceholders(flattenMatchTokens(parsed.tokens, false))
+  ) {
+    return "must not contain adjacent placeholders";
+  }
+
+  return null;
+}
+
 function emptyValueFor(type: ParameterType): ResolvedParameterValue {
   if (type === "number") {
     return { significant: false, value: "0" };

@@ -18,6 +18,11 @@ import {
   deleteArticleRow,
   getArticleRow,
 } from "@/articles/store";
+import {
+  type CustomerDatabase,
+  getCustomerRow,
+  upsertCustomerRow,
+} from "@/customers/store";
 import { articles, customers } from "@/db/schema";
 
 /**
@@ -177,6 +182,35 @@ async function createCustomer(
   return folderPath;
 }
 
+/** Seeds the customer cache row the article mutations refresh. */
+function seedCustomerRow(folderPath: string, articleCount: number): void {
+  upsertCustomerRow(database as CustomerDatabase, {
+    articleSchemaVersion: 1,
+    customerCode: "0001",
+    folderMtimeMs: Date.now(),
+    folderName: path.basename(folderPath),
+    folderPath,
+    issues: [],
+    metadata: {
+      article: null,
+      articleCount,
+      issues: [],
+      revision: null,
+    },
+    name: "Acme Srl",
+    revisionSchemaVersion: 1,
+    schemaVersion: 1,
+    status: "ok",
+  });
+}
+
+function cachedArticleCount(folderPath: string): number | undefined {
+  const row = getCustomerRow(database as CustomerDatabase, folderPath);
+  const metadata = row?.metadataJson as { articleCount?: number } | undefined;
+
+  return metadata?.articleCount;
+}
+
 async function pathExists(target: string): Promise<boolean> {
   try {
     await fs.lstat(target);
@@ -276,6 +310,18 @@ describe("createArticle", () => {
       folderName: "article-example-1",
       revisionCount: 0,
     });
+  });
+
+  it("refreshes the cached customer article count", async () => {
+    const customer = await createCustomer();
+    seedCustomerRow(customer, 0);
+
+    await createArticle(context, {
+      customerFolderPath: customer,
+      parameters: { CODE: "article-1" },
+    });
+
+    expect(cachedArticleCount(customer)).toBe(1);
   });
 
   it("writes and caches custom parameters", async () => {
@@ -977,6 +1023,16 @@ describe("removeArticle", () => {
     expect(await pathExists(trashed)).toBe(true);
     expect(await readArticleData(trashed)).toMatchObject({ CODE: "article-1" });
     expect(getArticleRow(database as ArticleDatabase, articlePath)).toBeNull();
+  });
+
+  it("refreshes the cached customer article count", async () => {
+    const customer = await createCustomer();
+    const articlePath = await createDefaultArticle(customer);
+    seedCustomerRow(customer, 1);
+
+    await removeArticle(context, { folderPath: articlePath });
+
+    expect(cachedArticleCount(customer)).toBe(0);
   });
 
   it("adds a collision suffix when the trash destination already exists", async () => {

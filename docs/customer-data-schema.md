@@ -178,6 +178,13 @@ Grammar rules:
   cannot be empty.
 - Literal `[`, `]`, `{` and `}` outside their constructs are errors.
 - The template may not exceed 512 characters.
+- `revision.key` must also be matchable against folder names: at most 8
+  placeholders, at most 4 optional groups, at most 32 tokens, and never two
+  placeholders adjacent in either the expanded or the collapsed form of the
+  optional groups. `parseCustomerConfig` enforces these limits, so a
+  configuration the app accepts can never make every article of that customer
+  uncacheable at scan time. The limits do not apply to `article.key`, which is
+  rendered from values and never matched.
 
 ### Rendering rules
 
@@ -443,7 +450,9 @@ types:
 Matching is deterministic (a memoised walk over the template tokens), not a
 regular expression, so a hostile `revision.key` cannot trigger catastrophic
 backtracking; the matcher also carries a bounded work budget shared across the
-names of one article, and aborts with `READ_FAILED` when it is exhausted.
+names of one article, and aborts with `READ_FAILED` when it is exhausted. The
+scanner reports the exhausted count as `ARTICLE_DATA_UNREADABLE` and preserves
+the article's existing cached row instead of deleting it.
 `revision_data.json` is not required for counting, and dot entries are ignored.
 Enumeration is capped at 10,000 entries per article: exceeding the cap fails the
 count instead of returning a partial number.

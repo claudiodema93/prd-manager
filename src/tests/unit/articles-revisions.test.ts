@@ -255,7 +255,8 @@ describe("buildRevisionNamePattern", () => {
     }
 
     const matcher = buildRevisionNamePattern(
-      section(names.map((name) => `{${name}}`).join("-"), parameters)
+      section(names.map((name) => `{${name}}`).join("-"), parameters),
+      { budget: 20_000 }
     );
     const hostile = `${"a-".repeat(127)}<`;
     const startedAt = Date.now();
@@ -273,6 +274,43 @@ describe("buildRevisionNamePattern", () => {
 
     expect(budgetErrors).toBeGreaterThan(0);
     expect(Date.now() - startedAt).toBeLessThan(5000);
+  });
+
+  it("keeps the consumed budget after a failed match", () => {
+    const matcher = buildRevisionNamePattern(
+      section("{A}-{B}", {
+        A: { required: true, type: "text" },
+        B: { required: true, type: "text" },
+      }),
+      { budget: 10 }
+    );
+    const hostile = `${"a-".repeat(120)}<`;
+
+    expect(() => matcher.test(hostile)).toThrow(ArticleServiceError);
+    // The second call must not start again with a full budget.
+    expect(() => matcher.test(hostile)).toThrow(ArticleServiceError);
+  });
+
+  it("matches thousands of names with a rich key under the default budget", () => {
+    const names = ["A", "B", "C", "D", "E", "F", "G", "H"];
+    const parameters: Record<string, { required: boolean; type: "text" }> = {};
+
+    for (const name of names) {
+      parameters[name] = { required: true, type: "text" };
+    }
+
+    const matcher = buildRevisionNamePattern(
+      section(names.map((name) => `{${name}}`).join("-"), parameters)
+    );
+
+    // A valid multi-placeholder key used to exhaust the shared budget after a
+    // few hundred revision folders, which deleted the article from the cache.
+    for (let index = 0; index < 1000; index += 1) {
+      const part = `a${String(index).padStart(29, "0")}`;
+      const name = names.map(() => part).join("-");
+
+      expect(matcher.test(name)).toBe(true);
+    }
   });
 });
 

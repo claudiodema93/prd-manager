@@ -18,6 +18,7 @@ import {
 } from "../customers/config";
 import { CustomerServiceError } from "../customers/errors";
 import {
+  countValidArticles,
   MAX_ARTICLE_DATA_BYTES,
   readJsonFile,
   writeJsonAtomic,
@@ -27,7 +28,12 @@ import {
   resolveKeyTemplate,
 } from "../customers/key-template";
 import { withCustomerLock } from "../customers/lock";
-import type { CustomerConfig, ParameterDefinitions } from "../customers/types";
+import { getCustomerRow, upsertCustomerRow } from "../customers/store";
+import type {
+  CustomerCacheMetadata,
+  CustomerConfig,
+  ParameterDefinitions,
+} from "../customers/types";
 import { assertConfiguredRoot, RootDirectoryError } from "../fs/root";
 import {
   ensureTrashSubdirectory,
@@ -157,6 +163,65 @@ async function assertArticlesRoot(
     }
 
     throw articleRootError(error);
+  }
+}
+
+/**
+ * Keeps the customers cache in step after an article folder is created or
+ * removed. The row is owned by the customer scanner, so this refresh is best
+ * effort: a failure here must never fail an article mutation that already
+ * happened, and the next customer scan repairs the row. The customers UI reads
+ * the cached `articleCount` to gate delete and key-change actions, so leaving
+ * it stale would show the wrong affordances until a rescan.
+ */
+async function refreshCustomerArticleCount(
+  context: ArticleServiceContext,
+  customerFolderPath: string
+): Promise<void> {
+  try {
+    const existing = getCustomerRow(context.db, customerFolderPath);
+
+    if (existing === null) {
+      return;
+    }
+
+    const rawMetadata = existing.metadataJson as unknown;
+
+    if (
+      typeof rawMetadata !== "object" ||
+      rawMetadata === null ||
+      Array.isArray(rawMetadata)
+    ) {
+      return;
+    }
+
+    const metadata = rawMetadata as CustomerCacheMetadata;
+    const counted = await countValidArticles(
+      customerFolderPath,
+      existing.customerCode
+    );
+    const [folderStats, configStats] = await Promise.all([
+      lstatIfExists(customerFolderPath),
+      lstatIfExists(path.join(customerFolderPath, CUSTOMER_CONFIG_FILE_NAME)),
+    ]);
+
+    upsertCustomerRow(context.db, {
+      articleSchemaVersion: existing.articleSchemaVersion,
+      customerCode: existing.customerCode,
+      folderMtimeMs: Math.floor(
+        Math.max(folderStats?.mtimeMs ?? 0, configStats?.mtimeMs ?? 0)
+      ),
+      folderName: existing.folderName,
+      folderPath: existing.folderPath,
+      issues: Array.isArray(metadata.issues) ? [...metadata.issues] : [],
+      metadata: { ...metadata, articleCount: counted.articleCount },
+      name: existing.name,
+      revisionSchemaVersion: existing.revisionSchemaVersion,
+      schemaVersion: existing.schemaVersion,
+      status: existing.status,
+    });
+  } catch {
+    // Best effort: the authoritative customer scan will repair the cache.
   }
 }
 
@@ -535,7 +600,7 @@ export function createArticle(
       throw toArticleWriteError(error);
     }
 
-    return upsertArticleRow(context.db, {
+    const row = upsertArticleRow(context.db, {
       activeRevision: articleConfig.activeRevision,
       customerCode: customer.customerCode,
       customerFolderPath: customer.customerFolderPath,
@@ -546,6 +611,10 @@ export function createArticle(
       revisionCount: 0,
       schemaVersion: articleConfig.schemaVersion,
     });
+
+    await refreshCustomerArticleCount(context, customer.customerFolderPath);
+
+    return row;
   });
 }
 
@@ -724,6 +793,8 @@ export function removeArticle(
 
     // The folder was the source of truth; a missing cache row is not an error.
     deleteArticleRow(context.db, article.articleFolderPath);
+
+    await refreshCustomerArticleCount(context, article.customerFolderPath);
 
     return article.articleFolderPath;
   });
