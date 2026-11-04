@@ -54,7 +54,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@babel/core": "^8.0.9",
+    "@babel/core": "^8.0.10",
     "@biomejs/biome": "^2.6.3",
     "@electron-forge/cli": "^8.0.1",
     "@electron-forge/maker-deb": "^8.0.1",
