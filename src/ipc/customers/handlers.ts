@@ -1,5 +1,6 @@
 import { ORPCError, os } from "@orpc/server";
 import { and, count, eq, sql } from "drizzle-orm";
+import { scanArticles as scanArticlesService } from "@/articles/scan";
 import {
   type CustomerServiceContext,
   createCustomer as createCustomerService,
@@ -132,9 +133,11 @@ function customerServiceContext(): CustomerServiceContext {
  */
 function customerOutput(record: CustomerRecord) {
   const metadata = customerCacheMetadataSchema.safeParse(record.metadataJson);
+  // `searchText` is a cache-internal column and must not cross the IPC wire.
+  const { searchText: _searchText, ...wire } = record;
 
   return {
-    ...record,
+    ...wire,
     articleCount: metadata.success ? metadata.data.articleCount : 0,
     metadataJson: metadata.success ? metadata.data : null,
   };
@@ -221,16 +224,27 @@ export const scanCustomers = os
   .input(scanCustomersInputSchema)
   .output(scanCustomersOutputSchema)
   .handler(async () => {
-    try {
-      const { articlesDirectory } = getFoldersPreference();
-
-      return await scanCustomersService({
-        db: getDatabase(),
-        rootDirectory: articlesDirectory,
-      });
-    } catch (error) {
+    const { articlesDirectory } = getFoldersPreference();
+    const db = getDatabase();
+    const result = await scanCustomersService({
+      db,
+      rootDirectory: articlesDirectory,
+    }).catch((error: unknown) => {
       throw mapCustomerError(error);
+    });
+
+    // The article scan is a best-effort refresh: it must never change the
+    // customer response or turn a successful customer scan into a failure.
+    try {
+      await scanArticlesService({ db, rootDirectory: articlesDirectory });
+    } catch (error) {
+      console.warn(
+        "[articles] Unable to refresh the article cache after scanning customers.",
+        error
+      );
     }
+
+    return result;
   });
 
 export const createCustomer = os

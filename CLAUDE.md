@@ -45,8 +45,8 @@ The renderer has no Node access at all.
 ```
 main.ts ──(ipcMain MessagePort upgrade)── preload.ts ──(window.postMessage)── ipc/manager.ts
    │                                                                            │
-   ├── ipc/router.ts → namespaces (app, customers, dialog, preferences,
-   │                    shell, theme, window)                             ipc.client
+   ├── ipc/router.ts → namespaces (app, articles, customers, dialog,
+   │                    preferences, shell, theme, window)                             ipc.client
    │        handlers.ts (os procedures) + schemas.ts (zod in/out)
    └── db/ (better-sqlite3 + Drizzle) · preferences/ (electron-store)
 ```
@@ -153,6 +153,52 @@ place). The oRPC procedures are `listCustomers`, `getCustomer`, `createCustomer`
 `updateCustomer`, `removeCustomer`, `scanCustomers` and `clearCustomers` —
 `upsertCustomer` was removed. Mutations validate the filesystem, change it, then
 update the cache row; the scanner and CRUD share a non-re-entrant lock.
+
+### Articles
+
+Article management follows the same filesystem-first model as customers. An article is a direct
+subfolder of a `customer-XXXX` folder containing `article_data.json`; the filesystem is the source
+of truth and the `articles` SQLite table (migration `drizzle/0003`, keyed by `folderPath`, indexed
+by `customerFolderPath` and `folderName`, with a pre-folded `searchText`) is a disposable cache
+rebuilt by scans. Only valid articles produce a row; the parsed document lives in `metadata_json`.
+
+- `src/articles/config.ts` — parse/validate/serialise `article_data.json` (declared parameter
+  values as canonical strings, custom parameters as JSON scalars, `activeRevision`).
+- `src/articles/revisions.ts` — revision-name matcher built from the customer's `revision.key`. It
+  is a memoised walk over the parsed template (never a compiled regex) with a shared work budget
+  that raises `RevisionMatchBudgetError`; canonical number forms are part of the match and a
+  non-required text placeholder may match zero characters, as `renderTokens` renders it blank.
+  `countValidRevisions` counts real, non-hidden directories (symlinks ignored) and throws above a
+  10,000-entry cap instead of returning a partial count.
+- `src/articles/folder.ts` — path confinement, `lstat`-based directory checks, folder-name safety,
+  `O_NOFOLLOW` reads of `article_data.json`.
+- `src/articles/scan.ts` — reconciles the cache with the filesystem under the customer lock; rows
+  not seen during the walk are deleted (the cache is single-root).
+- `src/articles/crud.ts` — create/update/remove, serialised through `withCustomerLock`: validate
+  the filesystem, change it, then update the cache row. After a create or remove it refreshes the
+  customer row's cached `articleCount` on a best-effort basis. Right before writing it re-checks
+  that the customer folder's `realpath` is still a direct child of the real root; a `realpath`
+  failure during the trash containment check refuses the delete; if a cross-device trash copy
+  succeeds but removing the source fails, the cache row is dropped before `TRASH_MOVE_FAILED` is
+  rethrown. Renderer-visible messages carry folder/file names only — absolute paths and
+  `JSON.parse` text are logged in the main process, never returned.
+- `src/articles/store.ts` — Drizzle cache-row helpers; `src/articles/errors.ts` holds the codes.
+
+The root and trash handling is shared with customers: `src/fs/root.ts` (`assertConfiguredRoot`:
+configured, exists, not a symlink, a directory) and `src/fs/trash.ts` (`moveFolderToTrash`,
+`ensureTrashSubdirectory`) report reason-based errors that each service maps onto its own codes.
+
+The `articles` oRPC namespace exposes `listArticles`, `getArticle`, `createArticle`,
+`updateArticle`, `removeArticle`, `scanArticles` and `clearArticles`. Output schemas are `.strict()`,
+so handlers strip cache-internal columns (`searchText`) before returning; the same applies to the
+customers namespace.
+
+`scanCachesOnStartup` in `src/main.ts` runs after the window is created: when `articlesDirectory`
+is set it runs `scanCustomers` and then `scanArticles` sequentially (they share the non-re-entrant
+lock) and logs failures without blocking startup. `preferences.setFolder` in
+`src/ipc/preferences/handlers.ts` clears both caches (`deleteAllCustomerRows` and
+`deleteAllArticleRows`, under the customer lock) when `articlesDirectory` changes, because rows are
+keyed by absolute paths; the next scans repopulate them.
 
 ### Preferences
 

@@ -22,6 +22,13 @@
       "when": 1793310049818,
       "tag": "0002_far_pretty_boy",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1793610589056,
+      "tag": "0003_slimy_revanche",
+      "breakpoints": true
     }
   ]
 }

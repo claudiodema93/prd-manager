@@ -120,29 +120,35 @@ export const scanCustomersInputSchema = z.object({}).strict();
  * Wire-format schemas. `createdAt`/`updatedAt` are epoch milliseconds, never
  * `Date`, because the message-port transport serialises responses as JSON.
  */
-export const customerSummarySchema = z.object({
-  articleCount: z.number().int().nonnegative(),
-  articleSchemaVersion: z.number().int().nullable(),
-  createdAt: z.number().int().nonnegative(),
-  customerCode: z.string(),
-  folderMtimeMs: z.number().int(),
-  folderName: z.string(),
-  folderPath: z.string(),
-  name: z.string().nullable(),
-  revisionSchemaVersion: z.number().int().nullable(),
-  schemaVersion: z.number().int().nullable(),
-  status: customerStatusSchema,
-  updatedAt: z.number().int().nonnegative(),
-});
+export const customerSummarySchema = z
+  .object({
+    articleCount: z.number().int().nonnegative(),
+    articleSchemaVersion: z.number().int().nullable(),
+    createdAt: z.number().int().nonnegative(),
+    customerCode: z.string(),
+    folderMtimeMs: z.number().int(),
+    folderName: z.string(),
+    folderPath: z.string(),
+    name: z.string().nullable(),
+    revisionSchemaVersion: z.number().int().nullable(),
+    schemaVersion: z.number().int().nullable(),
+    status: customerStatusSchema,
+    updatedAt: z.number().int().nonnegative(),
+  })
+  .strict();
 
-export const customerSchema = customerSummarySchema.extend({
-  metadataJson: customerCacheMetadataSchema.nullable(),
-});
+export const customerSchema = customerSummarySchema
+  .extend({
+    metadataJson: customerCacheMetadataSchema.nullable(),
+  })
+  .strict();
 
-export const listCustomersOutputSchema = z.object({
-  items: z.array(customerSummarySchema),
-  total: z.number().int().nonnegative(),
-});
+export const listCustomersOutputSchema = z
+  .object({
+    items: z.array(customerSummarySchema),
+    total: z.number().int().nonnegative(),
+  })
+  .strict();
 
 export const getCustomerOutputSchema = customerSchema.nullable();
 

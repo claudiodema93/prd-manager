@@ -11,7 +11,7 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { customers as customersTable } from "@/db/schema";
+import { articles, customers as customersTable } from "@/db/schema";
 import { customers } from "@/ipc/customers";
 
 const state = vi.hoisted(() => ({
@@ -31,7 +31,7 @@ vi.mock("@/preferences/store", () => ({
   getFoldersPreference: () => ({ ...state.folders }),
 }));
 
-const schema = { customers: customersTable };
+const schema = { articles, customers: customersTable };
 type TestDatabase = ReturnType<typeof drizzle<typeof schema>>;
 
 const testRouter = { customers };
@@ -268,7 +268,7 @@ describe("customers transport", () => {
     ).resolves.toBe(created.folderPath);
 
     await expect(
-      fs.lstat(path.join(trashDirectory, "customer-0001"))
+      fs.lstat(path.join(trashDirectory, "customers", "customer-0001"))
     ).resolves.toBeDefined();
     await expect(fs.lstat(created.folderPath)).rejects.toMatchObject({
       code: "ENOENT",
@@ -416,7 +416,7 @@ describe("customers transport", () => {
       folderPath
     );
     await expect(
-      fs.lstat(path.join(trashDirectory, "customer-0001"))
+      fs.lstat(path.join(trashDirectory, "customers", "customer-0001"))
     ).resolves.toBeDefined();
     await expect(fs.lstat(folderPath)).rejects.toMatchObject({
       code: "ENOENT",

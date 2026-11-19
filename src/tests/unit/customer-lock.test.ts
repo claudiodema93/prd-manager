@@ -16,9 +16,9 @@ import {
   listCustomerRows,
 } from "@/customers/store";
 import type { CustomerSectionDefinition } from "@/customers/types";
-import { customers } from "@/db/schema";
+import { articles, customers } from "@/db/schema";
 
-const schema = { customers };
+const schema = { articles, customers };
 
 type TestDatabase = ReturnType<typeof drizzle<typeof schema>>;
 

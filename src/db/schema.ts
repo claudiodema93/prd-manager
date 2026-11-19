@@ -2,6 +2,34 @@ import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { CUSTOMER_STATUSES } from "../constants/customers";
 
+export const articles = sqliteTable(
+  "articles",
+  {
+    activeRevision: text("active_revision"),
+    // Epoch milliseconds; kept as plain integers because the IPC transport is
+    // JSON (see `customers.createdAt`).
+    createdAt: integer("created_at").notNull().default(sql`0`),
+    customerCode: text("customer_code").notNull(),
+    customerFolderPath: text("customer_folder_path").notNull(),
+    folderMtimeMs: integer("folder_mtime_ms").notNull(),
+    folderName: text("folder_name").notNull(),
+    folderPath: text("folder_path").primaryKey(),
+    metadataJson: text("metadata_json", { mode: "json" }).$type<
+      Record<string, unknown>
+    >(),
+    revisionCount: integer("revision_count").notNull().default(0),
+    schemaVersion: integer("schema_version").notNull(),
+    // Pre-folded (NFC, lower-cased) concatenation of the folder name and the
+    // declared/custom parameter values. Maintained by upsertArticleRow.
+    searchText: text("search_text").notNull().default(""),
+    updatedAt: integer("updated_at").notNull().default(sql`0`),
+  },
+  (table) => [
+    index("idx_articles_customer").on(table.customerFolderPath),
+    index("idx_articles_name").on(table.folderName),
+  ]
+);
+
 export const customers = sqliteTable(
   "customers",
   {

@@ -27,7 +27,7 @@ import type {
   CustomerCacheMetadata,
   CustomerScanResult,
 } from "@/customers/types";
-import { customers } from "@/db/schema";
+import { articles, customers } from "@/db/schema";
 
 /**
  * Simulates a folder that disappears between the directory listing and the
@@ -54,7 +54,7 @@ vi.mock("@/customers/folder", async (importOriginal) => {
   };
 });
 
-const schema = { customers };
+const schema = { articles, customers };
 type TestDatabase = ReturnType<typeof drizzle<typeof schema>>;
 
 const CONFIG_FILE = "customer_data.json";

@@ -333,36 +333,49 @@ async function setupORPC() {
 }
 
 /**
- * Reconciles the customer cache with the filesystem in the background. It is
- * intentionally fire-and-forget: a slow or unreadable directory must never
- * delay the window, and the renderer can request a manual scan at any time.
+ * Reconciles the customer and article caches with the filesystem in the
+ * background. It is intentionally fire-and-forget: a slow or unreadable
+ * directory must never delay the window, and the renderer can request a manual
+ * scan at any time. The scans run sequentially because they share the
+ * non-re-entrant customer lock.
  */
-async function scanCustomersOnStartup(): Promise<void> {
+async function scanCachesOnStartup(): Promise<void> {
   try {
-    const [{ getDatabase }, { getFoldersPreference }, { scanCustomers }] =
-      await Promise.all([
-        import("@/db"),
-        import("@/preferences/store"),
-        import("@/customers/scan"),
-      ]);
+    const [
+      { getDatabase },
+      { getFoldersPreference },
+      { scanCustomers },
+      { scanArticles },
+    ] = await Promise.all([
+      import("@/db"),
+      import("@/preferences/store"),
+      import("@/customers/scan"),
+      import("@/articles/scan"),
+    ]);
     const root = getFoldersPreference().articlesDirectory;
 
     if (!root) {
       return;
     }
 
-    const result = await scanCustomers({
-      db: getDatabase(),
-      rootDirectory: root,
-    });
+    const db = getDatabase();
+    const customersResult = await scanCustomers({ db, rootDirectory: root });
 
     if (isDevelopment) {
       console.info(
-        `[customers] Startup scan: ${result.scanned} scanned, ${result.created} created, ${result.updated} updated, ${result.removed} removed.`
+        `[customers] Startup scan: ${customersResult.scanned} scanned, ${customersResult.created} created, ${customersResult.updated} updated, ${customersResult.removed} removed.`
+      );
+    }
+
+    const articlesResult = await scanArticles({ db, rootDirectory: root });
+
+    if (isDevelopment) {
+      console.info(
+        `[articles] Startup scan: ${articlesResult.scanned} scanned, ${articlesResult.created} created, ${articlesResult.updated} updated, ${articlesResult.removed} removed.`
       );
     }
   } catch (error) {
-    console.error("[customers] Startup scan failed.", error);
+    console.error("[scans] Startup scan failed.", error);
   }
 }
 
@@ -424,7 +437,7 @@ if (started) {
         await setupORPC();
         createWindow();
         startupComplete = true;
-        scanCustomersOnStartup();
+        scanCachesOnStartup();
         checkForUpdates();
 
         // DevTools extensions are fetched from the Chrome Web Store at runtime;

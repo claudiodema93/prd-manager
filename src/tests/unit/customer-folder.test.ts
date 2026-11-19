@@ -20,6 +20,7 @@ import {
  * every platform. Everything else delegates to the real implementation.
  */
 const fsControl = vi.hoisted(() => ({
+  failCp: false,
   failRenameAt: new Map<number, string>(),
   failRmAt: new Map<number, string>(),
   renameCalls: 0,
@@ -34,6 +35,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
   return {
     ...actual,
+    cp: async (...args: Parameters<typeof actual.cp>) => {
+      if (fsControl.failCp) {
+        throw errno("cp", "EIO");
+      }
+
+      await actual.cp(...args);
+    },
     rename: async (from: string, to: string) => {
       fsControl.renameCalls += 1;
 
@@ -78,6 +86,7 @@ const TRASH_SUFFIX_PATTERN = /-\d+(?:-\d+)?$/u;
 let tempDir: string;
 
 beforeEach(async () => {
+  fsControl.failCp = false;
   fsControl.renameCalls = 0;
   fsControl.rmCalls = 0;
   fsControl.failRenameAt.clear();
@@ -571,6 +580,26 @@ describe("countValidArticles", () => {
     expect(result.articleCount).toBe(0);
     expect(result.issues).toHaveLength(100);
     expect(result.issues.at(-1)?.message).toMatch(TOO_MANY_ISSUES_PATTERN);
+
+    const retained = result.issues.slice(0, -1).map((issue) => issue.path);
+
+    expect(retained).toEqual([...retained].sort());
+  });
+
+  it("returns issues in a deterministic order", async () => {
+    const customerFolder = path.join(tempDir, FOLDER_NAME);
+
+    await Promise.all(
+      ["article-c", "article-a", "article-b"].map((name) =>
+        fs.mkdir(path.join(customerFolder, name), { recursive: true })
+      )
+    );
+
+    const result = await countValidArticles(customerFolder, CUSTOMER_CODE);
+    const paths = result.issues.map((issue) => issue.path);
+
+    expect(paths).toHaveLength(3);
+    expect(paths).toEqual([...paths].sort());
   });
 
   it("rejects a customer folder above the entry budget", async () => {
@@ -702,6 +731,60 @@ describe("moveCustomerToTrash", () => {
     await expect(
       pathExists(path.join(trashDirectory, FOLDER_NAME))
     ).resolves.toBe(true);
+  });
+
+  it("fails with TRASH_MOVE_FAILED when the cross-device copy fails", async () => {
+    const trashDirectory = path.join(tempDir, "trash");
+    const sourceFolderPath = path.join(tempDir, FOLDER_NAME);
+
+    await fs.mkdir(trashDirectory);
+    await fs.mkdir(sourceFolderPath);
+    fsControl.failRenameAt.set(1, "EXDEV");
+    fsControl.failCp = true;
+
+    expect(
+      await captureAsyncError(() =>
+        moveCustomerToTrash({
+          folderName: FOLDER_NAME,
+          sourceFolderPath,
+          trashDirectory,
+        })
+      )
+    ).toMatchObject({ code: "TRASH_MOVE_FAILED" });
+
+    await expect(pathExists(sourceFolderPath)).resolves.toBe(true);
+  });
+
+  it("fails with TRASH_MOVE_FAILED for a relative source path", async () => {
+    const trashDirectory = path.join(tempDir, "trash");
+
+    await fs.mkdir(trashDirectory);
+
+    expect(
+      await captureAsyncError(() =>
+        moveCustomerToTrash({
+          folderName: FOLDER_NAME,
+          sourceFolderPath: "relative-source",
+          trashDirectory,
+        })
+      )
+    ).toMatchObject({ code: "TRASH_MOVE_FAILED" });
+  });
+
+  it("fails with TRASH_MOVE_FAILED for a relative trash path", async () => {
+    const sourceFolderPath = path.join(tempDir, FOLDER_NAME);
+
+    await fs.mkdir(sourceFolderPath);
+
+    expect(
+      await captureAsyncError(() =>
+        moveCustomerToTrash({
+          folderName: FOLDER_NAME,
+          sourceFolderPath,
+          trashDirectory: "relative-trash",
+        })
+      )
+    ).toMatchObject({ code: "TRASH_MOVE_FAILED" });
   });
 
   it("fails with TRASH_NOT_FOUND when the trash directory is missing", async () => {

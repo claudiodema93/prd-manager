@@ -4,9 +4,9 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { app } from "electron";
-import { customers } from "./schema";
+import { articles, customers } from "./schema";
 
-const schema = { customers };
+const schema = { articles, customers };
 
 /** The 16-byte header every SQLite database starts with. */
 const SQLITE_HEADER = Buffer.from("SQLite format 3\0", "binary");

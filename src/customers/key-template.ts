@@ -368,6 +368,145 @@ export function parseKeyTemplate(
   };
 }
 
+/**
+ * Caps that keep matching a key template tractable. They apply to
+ * `revision.key` only: an article key is rendered from values and never
+ * matched against folder names, so adjacency and token count are harmless
+ * there.
+ */
+export const MATCHABLE_TEMPLATE_LIMITS = {
+  maxOptionalGroups: 4,
+  maxPlaceholders: 8,
+  maxTokens: 32,
+} as const;
+
+type FlatTokenKind = "literal" | "placeholder";
+
+/**
+ * Flattens tokens into literals and placeholders. With `expandOptionals`, the
+ * contents of an optional group are inlined; without it, the whole group is
+ * dropped, modelling both possible rendered forms of the key.
+ */
+function flattenMatchTokens(
+  tokens: readonly TemplateToken[],
+  expandOptionals: boolean
+): FlatTokenKind[] {
+  const flattened: FlatTokenKind[] = [];
+
+  for (const token of tokens) {
+    if (token.kind === "literal") {
+      flattened.push("literal");
+      continue;
+    }
+
+    if (token.kind === "placeholder") {
+      flattened.push("placeholder");
+      continue;
+    }
+
+    if (expandOptionals) {
+      flattened.push(...flattenMatchTokens(token.tokens, true));
+    }
+  }
+
+  return flattened;
+}
+
+function hasAdjacentMatchPlaceholders(
+  tokens: readonly FlatTokenKind[]
+): boolean {
+  for (let index = 1; index < tokens.length; index += 1) {
+    if (
+      tokens[index - 1] === "placeholder" &&
+      tokens[index] === "placeholder"
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function countTemplatePlaceholders(tokens: readonly TemplateToken[]): number {
+  let count = 0;
+
+  for (const token of tokens) {
+    if (token.kind === "placeholder") {
+      count += 1;
+      continue;
+    }
+
+    if (token.kind === "optional") {
+      count += countTemplatePlaceholders(token.tokens);
+    }
+  }
+
+  return count;
+}
+
+function countTemplateOptionalGroups(tokens: readonly TemplateToken[]): number {
+  let count = 0;
+
+  for (const token of tokens) {
+    if (token.kind === "optional") {
+      count += 1 + countTemplateOptionalGroups(token.tokens);
+    }
+  }
+
+  return count;
+}
+
+function countTemplateTokens(tokens: readonly TemplateToken[]): number {
+  let count = 0;
+
+  for (const token of tokens) {
+    count += 1;
+
+    if (token.kind === "optional") {
+      count += countTemplateTokens(token.tokens);
+    }
+  }
+
+  return count;
+}
+
+/**
+ * Returns a clause describing why a parsed template cannot be matched against
+ * folder names, or `null` when it is safe. Keeping this next to the parser
+ * means `parseCustomerConfig` and the article revision matcher enforce exactly
+ * the same limits.
+ */
+export function findMatchableTemplateProblem(
+  parsed: ParsedKeyTemplate
+): string | null {
+  const placeholders = countTemplatePlaceholders(parsed.tokens);
+
+  if (placeholders > MATCHABLE_TEMPLATE_LIMITS.maxPlaceholders) {
+    return `contains ${placeholders} placeholders; the maximum is ${MATCHABLE_TEMPLATE_LIMITS.maxPlaceholders}`;
+  }
+
+  const optionalGroups = countTemplateOptionalGroups(parsed.tokens);
+
+  if (optionalGroups > MATCHABLE_TEMPLATE_LIMITS.maxOptionalGroups) {
+    return `contains ${optionalGroups} optional groups; the maximum is ${MATCHABLE_TEMPLATE_LIMITS.maxOptionalGroups}`;
+  }
+
+  if (
+    countTemplateTokens(parsed.tokens) > MATCHABLE_TEMPLATE_LIMITS.maxTokens
+  ) {
+    return `contains too many tokens; the maximum is ${MATCHABLE_TEMPLATE_LIMITS.maxTokens}`;
+  }
+
+  if (
+    hasAdjacentMatchPlaceholders(flattenMatchTokens(parsed.tokens, true)) ||
+    hasAdjacentMatchPlaceholders(flattenMatchTokens(parsed.tokens, false))
+  ) {
+    return "must not contain adjacent placeholders";
+  }
+
+  return null;
+}
+
 function emptyValueFor(type: ParameterType): ResolvedParameterValue {
   if (type === "number") {
     return { significant: false, value: "0" };
@@ -564,19 +703,50 @@ function validateRenderedKey(key: string): void {
   }
 }
 
+export interface ResolvedKeyTemplate {
+  /** The rendered, file-name-safe key. */
+  readonly rendered: string;
+  /**
+   * Canonical string value for the resolved parameters. The default call
+   * resolves every declared parameter; `renderKeyTemplate` resolves only the
+   * ones referenced by the template to preserve its historical behaviour.
+   */
+  readonly values: Readonly<Record<string, string>>;
+}
+
+export interface ResolveKeyTemplateOptions {
+  /**
+   * Resolve and canonicalise every declared parameter (default), not only the
+   * ones referenced by the template. Article data relies on the default;
+   * `renderKeyTemplate` opts out so unused required parameters do not turn an
+   * otherwise valid rendering into an error.
+   */
+  readonly allParameters?: boolean;
+}
+
 /**
- * Renders a key template with the supplied values. Missing values fall back to
- * the parameter default; required parameters are rejected when blank.
+ * Renders a key template and also returns the canonical string value of the
+ * resolved parameters. By default every declared parameter is resolved (not
+ * only the ones referenced by the template). Article data uses this to persist
+ * numbers as canonical decimals and booleans as `"true"`/`"false"` without
+ * duplicating the rendering rules.
  */
-export function renderKeyTemplate(
+export function resolveKeyTemplate(
   template: string,
   parameters: ParameterDefinitions,
-  values: Readonly<Record<string, string | number | boolean | null | undefined>>
-): string {
+  values: Readonly<
+    Record<string, string | number | boolean | null | undefined>
+  >,
+  options: ResolveKeyTemplateOptions = {}
+): ResolvedKeyTemplate {
   const parsed = parseKeyTemplate(template, parameters);
   const resolved = new Map<string, ResolvedParameterValue>();
+  const names =
+    options.allParameters === false
+      ? parsed.referencedParameters
+      : Object.keys(parameters);
 
-  for (const name of parsed.referencedParameters) {
+  for (const name of names) {
     resolved.set(
       name,
       resolveParameterValue(name, parameters[name], values[name])
@@ -586,5 +756,32 @@ export function renderKeyTemplate(
   const rendered = renderTokens(parsed.tokens, resolved);
   validateRenderedKey(rendered.text);
 
-  return rendered.text;
+  const canonicalValues: Record<string, string> = {};
+
+  for (const name of names) {
+    const value = resolved.get(name);
+
+    if (value === undefined) {
+      throw renderError(`Parameter "${name}" was not resolved.`);
+    }
+
+    canonicalValues[name] = value.value;
+  }
+
+  return { rendered: rendered.text, values: canonicalValues };
+}
+
+/**
+ * Renders a key template with the supplied values. Missing values fall back to
+ * the parameter default; required parameters are rejected when blank. Only
+ * parameters referenced by the template are resolved, as before.
+ */
+export function renderKeyTemplate(
+  template: string,
+  parameters: ParameterDefinitions,
+  values: Readonly<Record<string, string | number | boolean | null | undefined>>
+): string {
+  return resolveKeyTemplate(template, parameters, values, {
+    allParameters: false,
+  }).rendered;
 }

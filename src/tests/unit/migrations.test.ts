@@ -7,7 +7,7 @@ import { getTableColumns } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { describe, expect, it } from "vitest";
-import { customers } from "@/db/schema";
+import { articles, customers } from "@/db/schema";
 
 /**
  * The migrations are the source of truth for the on-disk shape of the cache.
@@ -55,7 +55,7 @@ function readMigrationTags(): string[] {
 
 function migrateInMemory() {
   const sqlite = new Database(":memory:");
-  const db = drizzle({ client: sqlite, schema: { customers } });
+  const db = drizzle({ client: sqlite, schema: { articles, customers } });
 
   migrate(db, { migrationsFolder });
 
@@ -110,6 +110,49 @@ describe("drizzle migrations", () => {
         .sort();
 
       expect(createdIndexes).toEqual(["idx_customers_code_name"]);
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("creates exactly the article columns declared in the schema", () => {
+    const sqlite = migrateInMemory();
+
+    try {
+      const migratedColumns = sqlite.pragma(
+        "table_info(articles)"
+      ) as TableInfoRow[];
+      const actual = Object.fromEntries(
+        migratedColumns
+          .map((column) => [column.name, column.type.toLowerCase()])
+          .sort(([a], [b]) => a.localeCompare(b))
+      );
+      const expected = Object.fromEntries(
+        Object.values(getTableColumns(articles))
+          .map((column) => [column.name, column.getSQLType().toLowerCase()])
+          .sort(([a], [b]) => a.localeCompare(b))
+      );
+
+      expect(actual).toEqual(expected);
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("creates the article indexes and nothing else", () => {
+    const sqlite = migrateInMemory();
+
+    try {
+      const indexes = sqlite.pragma("index_list(articles)") as IndexListRow[];
+      const createdIndexes = indexes
+        .filter((index) => index.origin === "c")
+        .map((index) => index.name)
+        .sort();
+
+      expect(createdIndexes).toEqual([
+        "idx_articles_customer",
+        "idx_articles_name",
+      ]);
     } finally {
       sqlite.close();
     }

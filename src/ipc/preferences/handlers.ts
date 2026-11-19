@@ -1,5 +1,6 @@
 import { os } from "@orpc/server";
 import { nativeTheme } from "electron";
+import { deleteAllArticleRows } from "@/articles/store";
 import { withCustomerLock } from "@/customers/lock";
 import { deleteAllCustomerRows } from "@/customers/store";
 import {
@@ -52,9 +53,9 @@ export const setFolder = os
 
     setFolderPreference(input.key, input.directory);
 
-    // The cache is keyed by absolute folder paths and the scanner only
-    // reconciles rows under the current root. Changing the articles root must
-    // therefore invalidate the old snapshot; the next scan repopulates it.
+    // The cache is keyed by absolute folder paths and the scanners only
+    // reconcile rows under the current root. Changing the articles root must
+    // therefore invalidate the old snapshot; the next scans repopulate it.
     if (
       input.key === "articlesDirectory" &&
       input.directory !== previous.articlesDirectory
@@ -62,14 +63,19 @@ export const setFolder = os
       try {
         const { getDatabase } = await import("@/db");
 
-        await withCustomerLock(() =>
-          Promise.resolve(deleteAllCustomerRows(getDatabase()))
-        );
+        await withCustomerLock(() => {
+          const db = getDatabase();
+
+          deleteAllCustomerRows(db);
+          deleteAllArticleRows(db);
+
+          return Promise.resolve();
+        });
       } catch (error) {
         // The cache may not be initialised yet (tests, early startup); the
-        // next scan reconciles it, so this is not fatal for the preference.
+        // next scans reconcile it, so this is not fatal for the preference.
         console.warn(
-          "[customers] Unable to clear the cache after changing the articles directory.",
+          "[cache] Unable to clear the caches after changing the articles directory.",
           error
         );
       }

@@ -10,9 +10,9 @@ import { parseCustomerConfig } from "@/customers/config";
 import { renderKeyTemplate } from "@/customers/key-template";
 import { scanCustomers } from "@/customers/scan";
 import { type CustomerDatabase, getCustomerRow } from "@/customers/store";
-import { customers } from "@/db/schema";
+import { articles, customers } from "@/db/schema";
 
-const schema = { customers };
+const schema = { articles, customers };
 
 type TestDatabase = ReturnType<typeof drizzle<typeof schema>>;
 
