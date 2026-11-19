@@ -24,6 +24,7 @@ import {
   upsertCustomerRow,
 } from "@/customers/store";
 import { articles, customers } from "@/db/schema";
+import { TrashMoveError } from "@/fs/trash";
 
 /**
  * Lets one test simulate a failure between `mkdir` and the data write, which is
@@ -32,15 +33,74 @@ import { articles, customers } from "@/db/schema";
  * created folder with a symlink.
  */
 const folderControl = vi.hoisted(() => ({
+  afterConfigRead: null as null | (() => Promise<void>),
   beforeThrow: null as null | ((filePath: string) => Promise<void>),
   failWrite: false,
 }));
+
+/** Lets a test fail `realpath` for one path, or make the trash move fail. */
+const fsControl = vi.hoisted(() => ({
+  failRealpathFor: null as null | string,
+  failTrashMove: false,
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+
+  return {
+    ...actual,
+    realpath: (async (target: string, ...rest: unknown[]) => {
+      if (fsControl.failRealpathFor === target) {
+        throw Object.assign(new Error("simulated realpath failure"), {
+          code: "EACCES",
+        });
+      }
+
+      return await (actual.realpath as (...args: unknown[]) => unknown)(
+        target,
+        ...rest
+      );
+    }) as typeof actual.realpath,
+  };
+});
+
+vi.mock("@/fs/trash", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/fs/trash")>();
+
+  return {
+    ...actual,
+    moveFolderToTrash: async (
+      ...args: Parameters<typeof actual.moveFolderToTrash>
+    ) => {
+      if (fsControl.failTrashMove) {
+        throw new actual.TrashMoveError(
+          "SOURCE_REMOVE_FAILED",
+          "Copied but could not remove the source."
+        );
+      }
+
+      return await actual.moveFolderToTrash(...args);
+    },
+  };
+});
 
 vi.mock("@/customers/folder", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/customers/folder")>();
 
   return {
     ...actual,
+    readJsonFile: async (...args: Parameters<typeof actual.readJsonFile>) => {
+      const result = await actual.readJsonFile(...args);
+
+      if (folderControl.afterConfigRead !== null) {
+        const hook = folderControl.afterConfigRead;
+
+        folderControl.afterConfigRead = null;
+        await hook();
+      }
+
+      return result;
+    },
     writeJsonAtomic: async (filePath: string, value: unknown) => {
       if (folderControl.failWrite) {
         if (folderControl.beforeThrow !== null) {
@@ -135,8 +195,11 @@ let database: TestDatabase;
 let context: ArticleServiceContext;
 
 beforeEach(async () => {
+  folderControl.afterConfigRead = null;
   folderControl.beforeThrow = null;
   folderControl.failWrite = false;
+  fsControl.failRealpathFor = null;
+  fsControl.failTrashMove = false;
   revisionControl.error = null;
   tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "articles-crud-"));
   root = path.join(tempDir, "articles");
@@ -544,6 +607,113 @@ describe("createArticle", () => {
       )
     ).toBeNull();
   });
+});
+
+describe("renderer-visible error messages", () => {
+  it("does not expose absolute paths or JSON.parse text for an invalid customer config", async () => {
+    const customer = await createCustomer("0001", "{not json");
+    const error = await createArticle(
+      context,
+      createArticleInput(customer)
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ArticleServiceError);
+
+    const { message } = error as ArticleServiceError;
+
+    expect(message).toContain(CONFIG_FILE);
+    expect(message).not.toContain(tempDir);
+    expect(message).not.toContain("JSON");
+    expect(message).not.toContain("position");
+  });
+
+  it("does not expose absolute paths for a missing customer config", async () => {
+    const customer = customerFolder("0001");
+
+    await fs.mkdir(customer, { recursive: true });
+
+    const error = await createArticle(
+      context,
+      createArticleInput(customer)
+    ).catch((caught: unknown) => caught);
+
+    expect((error as ArticleServiceError).message).not.toContain(tempDir);
+  });
+
+  it("does not expose absolute paths for an existing article or a bad folder", async () => {
+    const customer = await createCustomer();
+
+    await createDefaultArticle(customer);
+
+    const exists = await createArticle(
+      context,
+      createArticleInput(customer)
+    ).catch((caught: unknown) => caught);
+    const outside = await createArticle(
+      context,
+      createArticleInput(path.join(tempDir, "elsewhere"))
+    ).catch((caught: unknown) => caught);
+    const missing = await updateArticle(context, {
+      folderPath: path.join(customer, "nope"),
+    }).catch((caught: unknown) => caught);
+
+    for (const error of [exists, outside, missing]) {
+      expect(error).toBeInstanceOf(ArticleServiceError);
+      expect((error as ArticleServiceError).message).not.toContain(tempDir);
+    }
+  });
+});
+
+describe("customer folder swapped for a symlink after validation", () => {
+  async function swapCustomerForSymlink(customer: string): Promise<string> {
+    const outside = path.join(tempDir, "outside");
+
+    await fs.cp(customer, outside, { recursive: true });
+    await fs.rm(customer, { force: true, recursive: true });
+    await fs.symlink(outside, customer, "dir");
+
+    return outside;
+  }
+
+  it.skipIf(process.platform === "win32")(
+    "createArticle refuses to write outside the root",
+    async () => {
+      const customer = await createCustomer();
+      let outside = "";
+
+      folderControl.afterConfigRead = async () => {
+        outside = await swapCustomerForSymlink(customer);
+      };
+
+      await expect(
+        createArticle(context, createArticleInput(customer))
+      ).rejects.toMatchObject({ code: "ARTICLE_CUSTOMER_SYMLINK" });
+      expect(await pathExists(path.join(outside, "article-1"))).toBe(false);
+    }
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "updateArticle refuses to write outside the root",
+    async () => {
+      const customer = await createCustomer();
+      const articlePath = await createDefaultArticle(customer);
+      let outside = "";
+
+      folderControl.afterConfigRead = async () => {
+        outside = await swapCustomerForSymlink(customer);
+      };
+
+      await expect(
+        updateArticle(context, {
+          customParameters: { EXTRA: "changed" },
+          folderPath: articlePath,
+        })
+      ).rejects.toMatchObject({ code: "ARTICLE_CUSTOMER_SYMLINK" });
+      expect(
+        await readArticleData(path.join(outside, "article-1"))
+      ).not.toHaveProperty("EXTRA");
+    }
+  );
 });
 
 describe("createArticle path and root guards", () => {
@@ -1170,6 +1340,55 @@ describe("removeArticle", () => {
       expect(await pathExists(articlePath)).toBe(true);
     }
   );
+
+  it("refuses the move when the articles root cannot be resolved", async () => {
+    const customer = await createCustomer();
+    const articlePath = await createDefaultArticle(customer);
+
+    fsControl.failRealpathFor = root;
+
+    const error = await removeArticle(context, {
+      folderPath: articlePath,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ code: "INVALID_OPERATION" });
+    expect((error as ArticleServiceError).message).not.toContain(tempDir);
+    expect(await pathExists(articlePath)).toBe(true);
+  });
+
+  it("refuses the move when the article trash subdirectory cannot be resolved", async () => {
+    const customer = await createCustomer();
+    const articlePath = await createDefaultArticle(customer);
+
+    fsControl.failRealpathFor = path.join(trash, "articles", "customer-0001");
+
+    await expect(
+      removeArticle(context, { folderPath: articlePath })
+    ).rejects.toMatchObject({ code: "INVALID_OPERATION" });
+    expect(await pathExists(articlePath)).toBe(true);
+    expect(
+      getArticleRow(database as ArticleDatabase, articlePath)
+    ).not.toBeNull();
+  });
+
+  it("drops the cache row and refreshes the count when only the source removal fails", async () => {
+    const customer = await createCustomer();
+    const articlePath = await createDefaultArticle(customer);
+
+    seedCustomerRow(customer, 1);
+    fsControl.failTrashMove = true;
+
+    const error = await removeArticle(context, {
+      folderPath: articlePath,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ code: "TRASH_MOVE_FAILED" });
+    expect((error as ArticleServiceError).cause).toBeInstanceOf(TrashMoveError);
+    expect(getArticleRow(database as ArticleDatabase, articlePath)).toBeNull();
+    // The source folder still exists in this simulation, so the refreshed count
+    // is recomputed from the filesystem rather than left at its stale value.
+    expect(cachedArticleCount(customer)).toBe(1);
+  });
 
   it("removes the folder even when the config or cache row is gone", async () => {
     const customer = await createCustomer();

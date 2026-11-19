@@ -273,6 +273,67 @@ function articleTrashError(error: TrashMoveError): ArticleServiceError {
   }
 }
 
+/**
+ * Re-verifies, immediately before a write, that the customer folder is still a
+ * real direct child of the real root. `assertCustomerFolderDirectory` runs
+ * earlier, so a folder swapped for a symlink in between would otherwise make
+ * the write land outside the root.
+ */
+async function assertCustomerFolderStillConfined(
+  root: string,
+  customerFolderPath: string
+): Promise<void> {
+  const refusal = (cause?: unknown): ArticleServiceError =>
+    new ArticleServiceError(
+      "ARTICLE_CUSTOMER_SYMLINK",
+      `Refusing to write into customer folder "${path.basename(customerFolderPath)}": it no longer resolves inside the articles directory.`,
+      cause === undefined ? undefined : { cause }
+    );
+  let realRoot: string;
+  let realCustomer: string;
+
+  try {
+    [realRoot, realCustomer] = await Promise.all([
+      realpath(root),
+      realpath(customerFolderPath),
+    ]);
+  } catch (error) {
+    throw refusal(error);
+  }
+
+  const expected = path.join(realRoot, path.basename(customerFolderPath));
+
+  if (realCustomer !== expected) {
+    throw refusal();
+  }
+}
+
+/**
+ * Resolves a real path for a containment check. A path that cannot be resolved
+ * refuses the operation instead of silently skipping the check.
+ */
+async function realpathOrRefuse(
+  target: string,
+  label: string,
+  options: { readonly allowMissing?: boolean } = {}
+): Promise<string | null> {
+  try {
+    return await realpath(target);
+  } catch (error) {
+    if (options.allowMissing && isErrno(error, "ENOENT")) {
+      return null;
+    }
+
+    console.warn(`Unable to resolve the ${label} directory`, error);
+    // biome-ignore lint/style/useErrorCause: the failure is logged above.
+    throw new ArticleServiceError(
+      "INVALID_OPERATION",
+      `Unable to verify the ${label} directory location.`,
+      { cause: error }
+    );
+  }
+}
+
 async function ensureArticleTrashSubdirectory(
   trashDirectory: string,
   customerFolderName: string
@@ -322,10 +383,11 @@ async function loadCustomerConfig(
   try {
     raw = await readJsonFile(configPath, MAX_CUSTOMER_CONFIG_BYTES);
   } catch (error) {
+    console.warn(`Unable to read "${configPath}"`, error);
     // biome-ignore lint/style/useErrorCause: the cause is forwarded by ArticleServiceError.
     throw new ArticleServiceError(
       "ARTICLE_CUSTOMER_CONFIG_INVALID",
-      `Unable to read "${configPath}": ${errorMessage(error)}`,
+      `Unable to read ${CUSTOMER_CONFIG_FILE_NAME}.`,
       { cause: error }
     );
   }
@@ -333,17 +395,18 @@ async function loadCustomerConfig(
   if (raw === undefined) {
     throw new ArticleServiceError(
       "ARTICLE_CUSTOMER_CONFIG_MISSING",
-      `"${configPath}" does not exist.`
+      `${CUSTOMER_CONFIG_FILE_NAME} does not exist.`
     );
   }
 
   try {
     return parseCustomerConfig(raw);
   } catch (error) {
+    console.warn(`Invalid customer config "${configPath}"`, error);
     // biome-ignore lint/style/useErrorCause: the cause is forwarded by ArticleServiceError.
     throw new ArticleServiceError(
       "ARTICLE_CUSTOMER_CONFIG_INVALID",
-      `Invalid customer config "${configPath}": ${errorMessage(error)}`,
+      `${CUSTOMER_CONFIG_FILE_NAME} is invalid.`,
       { cause: error }
     );
   }
@@ -511,10 +574,11 @@ async function countArticleRevisions(
       throw error;
     }
 
+    console.warn(`Unable to count revisions in "${articleFolderPath}"`, error);
     // biome-ignore lint/style/useErrorCause: the cause is forwarded by ArticleServiceError.
     throw new ArticleServiceError(
       "ARTICLE_DATA_UNREADABLE",
-      `Unable to count revisions in "${articleFolderPath}": ${errorMessage(error)}`,
+      "Unable to count the article revisions.",
       { cause: error }
     );
   }
@@ -546,7 +610,7 @@ export function createArticle(
     if (await lstatIfExists(folderPath)) {
       throw new ArticleServiceError(
         "ARTICLE_ALREADY_EXISTS",
-        `Article folder "${folderPath}" already exists.`
+        `Article folder "${folderName}" already exists.`
       );
     }
 
@@ -568,6 +632,8 @@ export function createArticle(
 
     assertSerializedSize(articleConfig);
 
+    await assertCustomerFolderStillConfined(root, customer.customerFolderPath);
+
     try {
       await mkdir(folderPath, { mode: 0o755 });
     } catch (error) {
@@ -575,7 +641,7 @@ export function createArticle(
         // biome-ignore lint/style/useErrorCause: the cause is forwarded by ArticleServiceError.
         throw new ArticleServiceError(
           "ARTICLE_ALREADY_EXISTS",
-          `Article folder "${folderPath}" already exists.`,
+          `Article folder "${folderName}" already exists.`,
           { cause: error }
         );
       }
@@ -583,7 +649,7 @@ export function createArticle(
       // biome-ignore lint/style/useErrorCause: the cause is forwarded by ArticleServiceError.
       throw new ArticleServiceError(
         "WRITE_FAILED",
-        `Unable to create article folder "${folderPath}".`,
+        `Unable to create article folder "${folderName}".`,
         { cause: error }
       );
     }
@@ -698,6 +764,8 @@ export function updateArticle(
 
     assertSerializedSize(validated);
 
+    await assertCustomerFolderStillConfined(root, article.customerFolderPath);
+
     try {
       await writeJsonAtomic(dataPath, articleConfigDocument(validated));
     } catch (error) {
@@ -745,8 +813,9 @@ export function removeArticle(
     // paths so a symlinked intermediate component cannot smuggle it back.
     const trashDirectory = path.resolve(context.trashDirectory);
     const [realRoot, realTrash] = await Promise.all([
-      realpath(root).catch(() => null),
-      realpath(trashDirectory).catch(() => null),
+      realpathOrRefuse(root, "articles"),
+      // A missing trash is reported as TRASH_NOT_FOUND by the next step.
+      realpathOrRefuse(trashDirectory, "trash", { allowMissing: true }),
     ]);
 
     if (
@@ -770,8 +839,8 @@ export function removeArticle(
     // subdirectory resolves back inside the root and the move becomes an
     // in-place rename. Compare real paths after creation, before moving.
     const [realRootForTrash, realArticleTrashDirectory] = await Promise.all([
-      realpath(root).catch(() => null),
-      realpath(articleTrashDirectory).catch(() => null),
+      realpathOrRefuse(root, "articles"),
+      realpathOrRefuse(articleTrashDirectory, "article trash"),
     ]);
 
     if (
@@ -785,11 +854,27 @@ export function removeArticle(
       );
     }
 
-    await moveArticleToTrash({
-      folderName: article.articleFolderName,
-      sourceFolderPath: article.articleFolderPath,
-      trashDirectory: articleTrashDirectory,
-    });
+    try {
+      await moveArticleToTrash({
+        folderName: article.articleFolderName,
+        sourceFolderPath: article.articleFolderPath,
+        trashDirectory: articleTrashDirectory,
+      });
+    } catch (error) {
+      // The copy reached the trash but the source could not be removed: the
+      // article is no longer authoritative here, so drop the stale cache row
+      // and refresh the customer count before reporting the failure.
+      if (
+        error instanceof ArticleServiceError &&
+        error.cause instanceof TrashMoveError &&
+        error.cause.reason === "SOURCE_REMOVE_FAILED"
+      ) {
+        deleteArticleRow(context.db, article.articleFolderPath);
+        await refreshCustomerArticleCount(context, article.customerFolderPath);
+      }
+
+      throw error;
+    }
 
     // The folder was the source of truth; a missing cache row is not an error.
     deleteArticleRow(context.db, article.articleFolderPath);

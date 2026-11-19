@@ -251,8 +251,21 @@ function consumePaddedNumber(
   return ends;
 }
 
-function consumeText(state: MatchState, start: number): number[] {
+/**
+ * A non-required text parameter renders as "" when blank (see `renderTokens`),
+ * so it may also match zero characters. A required one needs at least one.
+ */
+function consumeText(
+  state: MatchState,
+  start: number,
+  allowEmpty: boolean
+): number[] {
   const ends: number[] = [];
+
+  if (allowEmpty) {
+    ends.push(start);
+  }
+
   const limit = Math.min(state.name.length, start + MAX_TEXT_COMPONENT_LENGTH);
 
   for (let end = start + 1; end <= limit; end += 1) {
@@ -293,8 +306,10 @@ function consumePlaceholder(
 
   const first = state.name.charCodeAt(start);
 
+  const isText = definition.type !== "bool" && definition.type !== "number";
+
   if (Number.isNaN(first)) {
-    return [];
+    return isText && definition.required !== true ? [start] : [];
   }
 
   if (definition.type === "bool") {
@@ -307,7 +322,7 @@ function consumePlaceholder(
       : consumePaddedNumber(state, start, first, token.width);
   }
 
-  return consumeText(state, start);
+  return consumeText(state, start, definition.required !== true);
 }
 
 function matchList(

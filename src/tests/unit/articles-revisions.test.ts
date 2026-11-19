@@ -117,6 +117,30 @@ describe("buildRevisionNamePattern", () => {
     expect(pattern.test(`A-a${String.fromCharCode(1)}b`)).toBe(false);
   });
 
+  it("lets a non-required text placeholder match zero characters", () => {
+    const optional = buildRevisionNamePattern(
+      section("REV{SUFFIX}", { SUFFIX: { required: false, type: "text" } })
+    );
+
+    expect(optional.test("REV")).toBe(true);
+    expect(optional.test("REVx")).toBe(true);
+    expect(optional.test("RE")).toBe(false);
+
+    const required = buildRevisionNamePattern(
+      section("REV{SUFFIX}", { SUFFIX: { required: true, type: "text" } })
+    );
+
+    expect(required.test("REV")).toBe(false);
+    expect(required.test("REVx")).toBe(true);
+
+    const middle = buildRevisionNamePattern(
+      section("A-{X}-B", { X: { required: false, type: "text" } })
+    );
+
+    expect(middle.test("A--B")).toBe(true);
+    expect(middle.test("A-x-B")).toBe(true);
+  });
+
   it("handles optional groups", () => {
     const pattern = buildRevisionNamePattern(
       section("{N}[_{EVO}]", {

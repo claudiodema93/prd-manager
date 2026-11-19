@@ -580,6 +580,26 @@ describe("countValidArticles", () => {
     expect(result.articleCount).toBe(0);
     expect(result.issues).toHaveLength(100);
     expect(result.issues.at(-1)?.message).toMatch(TOO_MANY_ISSUES_PATTERN);
+
+    const retained = result.issues.slice(0, -1).map((issue) => issue.path);
+
+    expect(retained).toEqual([...retained].sort());
+  });
+
+  it("returns issues in a deterministic order", async () => {
+    const customerFolder = path.join(tempDir, FOLDER_NAME);
+
+    await Promise.all(
+      ["article-c", "article-a", "article-b"].map((name) =>
+        fs.mkdir(path.join(customerFolder, name), { recursive: true })
+      )
+    );
+
+    const result = await countValidArticles(customerFolder, CUSTOMER_CODE);
+    const paths = result.issues.map((issue) => issue.path);
+
+    expect(paths).toHaveLength(3);
+    expect(paths).toEqual([...paths].sort());
   });
 
   it("rejects a customer folder above the entry budget", async () => {

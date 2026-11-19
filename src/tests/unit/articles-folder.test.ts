@@ -380,6 +380,19 @@ describe("readArticleDataFile", () => {
     });
   });
 
+  it("keeps absolute paths and JSON.parse text out of the error message", async () => {
+    const file = path.join(articleFolder, ARTICLE_DATA_FILE_NAME);
+
+    await fs.writeFile(file, "{ secret-token");
+
+    const error = (await captureError(() =>
+      readArticleDataFile(file)
+    )) as Error;
+
+    expect(error.message).not.toContain(articleFolder);
+    expect(error.message).not.toContain("secret-token");
+  });
+
   it("reports an oversized file", async () => {
     const file = path.join(articleFolder, ARTICLE_DATA_FILE_NAME);
 

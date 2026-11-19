@@ -295,6 +295,15 @@ describe("parseArticleConfigJson", () => {
     ).toMatchObject({ code: "ARTICLE_DATA_INVALID_JSON" });
   });
 
+  it("does not quote JSON.parse text in the malformed JSON message", () => {
+    const error = captureError(() =>
+      parseArticleConfigJson("{ secret-token", articleSection, "0001")
+    ) as Error;
+
+    expect(error.message).not.toContain("secret-token");
+    expect(error.message).not.toContain("position");
+  });
+
   it("reports an oversized document with ARTICLE_DATA_INVALID", () => {
     const text = `{"padding":"${"x".repeat(MAX_ARTICLE_DATA_BYTES)}"}`;
 

@@ -128,9 +128,11 @@ function articleServiceContext(): ArticleServiceContext {
  */
 function articleOutput(record: ArticleRecord) {
   const metadata = articleCacheMetadataSchema.safeParse(record.metadataJson);
+  // `searchText` is a cache-internal column and must not cross the IPC wire.
+  const { searchText: _searchText, ...wire } = record;
 
   return {
-    ...record,
+    ...wire,
     metadataJson: metadata.success ? metadata.data : null,
   };
 }

@@ -55,10 +55,6 @@ function isErrno(error: unknown, ...codes: readonly string[]): boolean {
   return typeof code === "string" && codes.includes(code);
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 /**
  * Keeps the `throw` out of catch blocks so the original failure can be
  * forwarded as `cause` without the linter losing track of it.
@@ -81,17 +77,11 @@ function resolveAbsolutePath(
   label: string
 ): string {
   if (filePath.includes("\0")) {
-    throw new ArticleServiceError(
-      code,
-      `${label} contains a NUL character: "${filePath}".`
-    );
+    throw new ArticleServiceError(code, `${label} contains a NUL character.`);
   }
 
   if (!path.isAbsolute(filePath)) {
-    throw new ArticleServiceError(
-      code,
-      `${label} must be an absolute path (received "${filePath}").`
-    );
+    throw new ArticleServiceError(code, `${label} must be an absolute path.`);
   }
 
   return path.resolve(filePath);
@@ -157,7 +147,7 @@ async function inspect(
   } catch (error) {
     throw articleError(
       "READ_FAILED",
-      `Unable to inspect ${label.toLowerCase()} "${resolved}".`,
+      `Unable to inspect ${label.toLowerCase()} "${path.basename(resolved)}".`,
       error
     );
   }
@@ -186,7 +176,7 @@ export function assertCustomerFolderPath(
   if (resolved === root || !samePath(parent, root)) {
     throw new ArticleServiceError(
       "ARTICLE_PATH_INVALID",
-      `Customer folder "${resolved}" must be a direct child of the articles directory "${root}".`
+      `Customer folder "${path.basename(resolved)}" must be a direct child of the articles directory.`
     );
   }
 
@@ -231,7 +221,7 @@ export function assertArticleFolderPath(
   if (!samePath(customerParent, root) || resolved === customerFolderPath) {
     throw new ArticleServiceError(
       "ARTICLE_PATH_INVALID",
-      `Article folder "${resolved}" must be a direct child of a customer folder inside "${root}".`
+      `Article folder "${path.basename(resolved)}" must be a direct child of a customer folder inside the articles directory.`
     );
   }
 
@@ -315,21 +305,21 @@ export async function assertCustomerFolderDirectory(
   if (!stats) {
     throw new ArticleServiceError(
       "ARTICLE_CUSTOMER_NOT_FOUND",
-      `Customer folder "${customerFolderPath}" does not exist.`
+      `Customer folder "${path.basename(customerFolderPath)}" does not exist.`
     );
   }
 
   if (stats.isSymbolicLink()) {
     throw new ArticleServiceError(
       "ARTICLE_CUSTOMER_SYMLINK",
-      `Refusing to use customer folder "${customerFolderPath}": it is a symbolic link.`
+      `Refusing to use customer folder "${path.basename(customerFolderPath)}": it is a symbolic link.`
     );
   }
 
   if (!stats.isDirectory()) {
     throw new ArticleServiceError(
       "ARTICLE_CUSTOMER_NOT_DIRECTORY",
-      `Customer folder "${customerFolderPath}" is not a directory.`
+      `Customer folder "${path.basename(customerFolderPath)}" is not a directory.`
     );
   }
 }
@@ -342,21 +332,21 @@ export async function assertArticleFolderDirectory(
   if (!stats) {
     throw new ArticleServiceError(
       "ARTICLE_NOT_FOUND",
-      `Article folder "${articleFolderPath}" does not exist.`
+      `Article folder "${path.basename(articleFolderPath)}" does not exist.`
     );
   }
 
   if (stats.isSymbolicLink()) {
     throw new ArticleServiceError(
       "ARTICLE_FOLDER_SYMLINK",
-      `Refusing to use article folder "${articleFolderPath}": it is a symbolic link.`
+      `Refusing to use article folder "${path.basename(articleFolderPath)}": it is a symbolic link.`
     );
   }
 
   if (!stats.isDirectory()) {
     throw new ArticleServiceError(
       "ARTICLE_FOLDER_NOT_DIRECTORY",
-      `Article folder "${articleFolderPath}" is not a directory.`
+      `Article folder "${path.basename(articleFolderPath)}" is not a directory.`
     );
   }
 }
@@ -396,7 +386,7 @@ export async function readArticleDataFile(filePath: string): Promise<unknown> {
   } catch (error) {
     throw articleError(
       "ARTICLE_DATA_UNREADABLE",
-      `Unable to inspect "${resolved}".`,
+      "Unable to inspect article_data.json.",
       error
     );
   }
@@ -404,28 +394,28 @@ export async function readArticleDataFile(filePath: string): Promise<unknown> {
   if (!stats) {
     throw new ArticleServiceError(
       "ARTICLE_DATA_MISSING",
-      `"${resolved}" does not exist.`
+      "article_data.json does not exist."
     );
   }
 
   if (stats.isSymbolicLink()) {
     throw new ArticleServiceError(
       "ARTICLE_DATA_UNREADABLE",
-      `Refusing to read "${resolved}": it is a symbolic link.`
+      "Refusing to read article_data.json: it is a symbolic link."
     );
   }
 
   if (!stats.isFile()) {
     throw new ArticleServiceError(
       "ARTICLE_DATA_UNREADABLE",
-      `Refusing to read "${resolved}": it is not a regular file.`
+      "Refusing to read article_data.json: it is not a regular file."
     );
   }
 
   if (stats.size > MAX_ARTICLE_DATA_BYTES) {
     throw new ArticleServiceError(
       "ARTICLE_DATA_UNREADABLE",
-      `Refusing to read "${resolved}": it is larger than ${MAX_ARTICLE_DATA_BYTES} bytes.`
+      `Refusing to read article_data.json: it is larger than ${MAX_ARTICLE_DATA_BYTES} bytes.`
     );
   }
 
@@ -445,14 +435,14 @@ export async function readArticleDataFile(filePath: string): Promise<unknown> {
     if (isErrno(error, "ENOENT")) {
       throw articleError(
         "ARTICLE_DATA_MISSING",
-        `"${resolved}" does not exist.`,
+        "article_data.json does not exist.",
         error
       );
     }
 
     throw articleError(
       "ARTICLE_DATA_UNREADABLE",
-      `Unable to read "${resolved}".`,
+      "Unable to read article_data.json.",
       error
     );
   }
@@ -463,14 +453,14 @@ export async function readArticleDataFile(filePath: string): Promise<unknown> {
     if (!openedStats.isFile()) {
       throw new ArticleServiceError(
         "ARTICLE_DATA_UNREADABLE",
-        `Refusing to read "${resolved}": it is not a regular file.`
+        "Refusing to read article_data.json: it is not a regular file."
       );
     }
 
     if (openedStats.size > MAX_ARTICLE_DATA_BYTES) {
       throw new ArticleServiceError(
         "ARTICLE_DATA_UNREADABLE",
-        `Refusing to read "${resolved}": it is larger than ${MAX_ARTICLE_DATA_BYTES} bytes.`
+        `Refusing to read article_data.json: it is larger than ${MAX_ARTICLE_DATA_BYTES} bytes.`
       );
     }
 
@@ -482,7 +472,7 @@ export async function readArticleDataFile(filePath: string): Promise<unknown> {
 
     throw articleError(
       "ARTICLE_DATA_UNREADABLE",
-      `Unable to read "${resolved}".`,
+      "Unable to read article_data.json.",
       error
     );
   } finally {
@@ -492,9 +482,12 @@ export async function readArticleDataFile(filePath: string): Promise<unknown> {
   try {
     return JSON.parse(contents) as unknown;
   } catch (error) {
+    // The JSON.parse text can quote file contents: keep it out of the
+    // renderer-visible message and log it in the main process only.
+    console.warn(`Invalid JSON in "${resolved}"`, error);
     throw articleError(
       "ARTICLE_DATA_INVALID_JSON",
-      `"${resolved}" does not contain valid JSON: ${errorMessage(error)}`,
+      "article_data.json does not contain valid JSON.",
       error
     );
   }

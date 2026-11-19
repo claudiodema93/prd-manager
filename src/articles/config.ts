@@ -342,10 +342,9 @@ export function parseArticleConfigJson(
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    throw invalidJson(
-      `article_data.json is not valid JSON: ${errorMessage(error)}`,
-      error
-    );
+    // The JSON.parse text can quote file contents: log it, never return it.
+    console.warn("article_data.json is not valid JSON", error);
+    throw invalidJson("article_data.json is not valid JSON.", error);
   }
 
   return parseArticleConfig(parsed, articleSection, customerCode);

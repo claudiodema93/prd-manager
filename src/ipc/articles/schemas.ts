@@ -129,27 +129,37 @@ export const scanArticlesInputSchema = z.object({}).strict();
  * Wire-format schemas. `createdAt`/`updatedAt` are epoch milliseconds, never
  * `Date`, because the message-port transport serialises responses as JSON.
  */
-export const articleSummarySchema = z.object({
-  activeRevision: z.string().min(1).max(MAX_ACTIVE_REVISION_LENGTH).nullable(),
-  createdAt: z.number().int().nonnegative(),
-  customerCode: z.string(),
-  customerFolderPath: z.string(),
-  folderMtimeMs: z.number().int(),
-  folderName: z.string(),
-  folderPath: z.string(),
-  revisionCount: z.number().int().nonnegative(),
-  schemaVersion: z.number().int().min(1),
-  updatedAt: z.number().int().nonnegative(),
-});
+export const articleSummarySchema = z
+  .object({
+    activeRevision: z
+      .string()
+      .min(1)
+      .max(MAX_ACTIVE_REVISION_LENGTH)
+      .nullable(),
+    createdAt: z.number().int().nonnegative(),
+    customerCode: z.string(),
+    customerFolderPath: z.string(),
+    folderMtimeMs: z.number().int(),
+    folderName: z.string(),
+    folderPath: z.string(),
+    revisionCount: z.number().int().nonnegative(),
+    schemaVersion: z.number().int().min(1),
+    updatedAt: z.number().int().nonnegative(),
+  })
+  .strict();
 
-export const articleSchema = articleSummarySchema.extend({
-  metadataJson: articleCacheMetadataSchema.nullable(),
-});
+export const articleSchema = articleSummarySchema
+  .extend({
+    metadataJson: articleCacheMetadataSchema.nullable(),
+  })
+  .strict();
 
-export const listArticlesOutputSchema = z.object({
-  items: z.array(articleSummarySchema),
-  total: z.number().int().nonnegative(),
-});
+export const listArticlesOutputSchema = z
+  .object({
+    items: z.array(articleSummarySchema),
+    total: z.number().int().nonnegative(),
+  })
+  .strict();
 
 export const getArticleOutputSchema = articleSchema.nullable();
 

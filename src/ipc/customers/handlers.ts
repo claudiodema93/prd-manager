@@ -133,9 +133,11 @@ function customerServiceContext(): CustomerServiceContext {
  */
 function customerOutput(record: CustomerRecord) {
   const metadata = customerCacheMetadataSchema.safeParse(record.metadataJson);
+  // `searchText` is a cache-internal column and must not cross the IPC wire.
+  const { searchText: _searchText, ...wire } = record;
 
   return {
-    ...record,
+    ...wire,
     articleCount: metadata.success ? metadata.data.articleCount : 0,
     metadataJson: metadata.success ? metadata.data : null,
   };

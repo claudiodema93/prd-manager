@@ -439,10 +439,20 @@ describe("customerCacheMetadataSchema", () => {
 
 describe("output schemas", () => {
   it("requires articleCount on a summary", () => {
-    const { articleCount: _articleCount, ...withoutCount } = sampleCustomer;
+    const { metadataJson: _metadata, ...summary } = sampleCustomer;
+    const { articleCount: _articleCount, ...withoutCount } = summary;
 
-    expect(customerSummarySchema.parse(sampleCustomer).articleCount).toBe(1);
+    expect(customerSummarySchema.parse(summary).articleCount).toBe(1);
     expect(() => customerSummarySchema.parse(withoutCount)).toThrow();
+  });
+
+  it("rejects unknown keys in output schemas", () => {
+    expect(() =>
+      customerSchema.parse({ ...sampleCustomer, searchText: "x" })
+    ).toThrow();
+    expect(() =>
+      listCustomersOutputSchema.parse({ extra: 1, items: [], total: 0 })
+    ).toThrow();
   });
 
   it("round-trips a customer through customerSchema", () => {
@@ -457,8 +467,9 @@ describe("output schemas", () => {
   });
 
   it("round-trips a list page", () => {
+    const { metadataJson: _metadata, ...summary } = sampleCustomer;
     const result = listCustomersOutputSchema.parse({
-      items: [sampleCustomer],
+      items: [summary],
       total: 1,
     });
 

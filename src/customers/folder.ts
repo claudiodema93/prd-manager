@@ -484,6 +484,23 @@ async function isCountableArticle(input: {
   return true;
 }
 
+function issueSortKey(issue: CustomerIssue): string {
+  // NUL cannot occur in paths, codes or messages, so it separates the fields
+  // and keeps the ordering path → code → message.
+  return `${issue.path ?? ""}\u0000${issue.code}\u0000${issue.message}`;
+}
+
+function compareIssues(a: CustomerIssue, b: CustomerIssue): number {
+  const left = issueSortKey(a);
+  const right = issueSortKey(b);
+
+  if (left === right) {
+    return 0;
+  }
+
+  return left < right ? -1 : 1;
+}
+
 export async function countValidArticles(
   customerFolderPath: string,
   customerCode: string,
@@ -579,6 +596,11 @@ export async function countValidArticles(
   } finally {
     await directory.close().catch(() => undefined);
   }
+
+  // `opendir` yields entries in filesystem order; sort so the output is stable.
+  // When the list was truncated, which issues were kept still depends on that
+  // filesystem order — only their order in the result is deterministic.
+  issues.sort(compareIssues);
 
   if (truncated) {
     issues.push({
